@@ -1,0 +1,33 @@
+# PlausiDen-CMS ↔ PlausiDen-AVP-Doctrine — placeholder integration.
+# Scaffold-only repo; every tier is `not_started`. The purpose of this file
+# is to declare that the repo participates in AVP grading once implementation
+# begins.
+
+[meta]
+repo                = "PlausiDen-CMS"
+doctrine_version    = "1.0"
+engine_version      = "0.0.0-placeholder"
+entered_namespace   = "2026-04-24"
+classification      = "infrastructure / content management substrate (scaffold)"
+
+[tiers]
+tier_1_correctness          = "not_started"
+tier_2_fuzz                 = "not_started"
+tier_3_adversarial          = "not_started"
+tier_4_cross_platform       = "not_started"
+tier_5_visual_drift         = "not_started"
+tier_6_formal               = "not_started"
+doctrine_conformance        = "not_started"
+generality                  = "not_started"
+harvest_readiness           = "not_started"
+harvest_integration         = "not_started"
+
+[graduation]
+next_gate = "promotion-from-scaffold-to-in-progress"
+note      = """
+Promotion condition (per README 'Trigger for promotion'): three distinct
+marketing sites need structured content editing, OR a non-technical editor
+hits friction, OR a marketing surface needs versioned/scheduled publishing.
+Below those triggers, every tier stays not_started and the repo remains
+a design anchor.
+"""

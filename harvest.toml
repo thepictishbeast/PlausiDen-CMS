@@ -1,0 +1,13 @@
+# PlausiDen-CMS ↔ PlausiDen-Harvest — placeholder feed.
+# Scaffold repo with no implementation; no candidates.
+
+[meta]
+project              = "PlausiDen-CMS"
+upstream_candidates  = false
+review_cadence       = "quarterly"
+rationale            = """
+No implementation yet. Once a first pass ships, harvest candidates will
+likely include: the content-type schema format, the WebAuthn + audit-log
+pattern (if it generalizes beyond CMS), and the per-site theming token
+integration with PlausiDen-Canon.
+"""
