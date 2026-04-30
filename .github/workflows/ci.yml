@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  heartbeat:
+    name: repo-touched heartbeat
+    runs-on: [self-hosted, linux, x64, plausiden]
+    steps:
+      - uses: actions/checkout@v4
+      - name: list root + size
+        run: |
+          ls -la
+          du -sh . | tee /dev/stderr
+      - name: detect type
+        run: |
+          [ -f Cargo.toml ]      && echo "rust workspace"      || true
+          [ -f package.json ]    && echo "node/typescript"     || true
+          [ -f pyproject.toml ]  && echo "python"              || true
+          [ -f Makefile ]        && echo "make"                || true
