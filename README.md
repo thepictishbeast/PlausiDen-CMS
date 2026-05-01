@@ -13,9 +13,44 @@
 
 # PlausiDen-CMS
 
-> **Scaffold only.** Implementation deferred per [`PlausiDen-Meta/PRIORITY.md`](https://github.com/thepictishbeast/PlausiDen-Meta/blob/main/PRIORITY.md) trigger gating. This repo exists as a name reservation and design anchor — do not build against it.
+> **v0 shipped on branch `cms-v0-blog-posts`.** Typed `BlogPost` and `Page` content schemas, multi-tenant directory layout, CLI (`pdcms`), and admin web UI (`pdcms-admin`) with a graphical per-section visual editor. Auth is single shared password; WebAuthn is the next iteration. **Ready to manage real client sites today.**
 
-Generic content management substrate for PlausiDen-namespace marketing / brochure sites. Intended to power **`plausiden-site`** (plausiden.com), **`SacredVote.org`** (marketing), and any future outward-facing marketing surface from a single codebase, with per-site theming and content stored independently.
+Generic content management substrate for PlausiDen-namespace marketing / brochure sites and any client site we ship. Powers **`plausiden-site`** (plausiden.com), **`SacredVote.org`** (when adopted), and any future outward-facing marketing surface from a single codebase, with content stored independently per tenant.
+
+## v0 — what ships
+
+| Crate | Role |
+|---|---|
+| [`cms-core`](cms-core/) | Typed content schema (`BlogPost`, `Page`, `Section` enum), `Store` for on-disk reads/writes, validation, atomic writes, markdown render. Multi-tenant by directory: `<root>/<site>/<type>/<slug>`. |
+| [`cms-cli`](cms-cli/)  | Binary `pdcms`: `list / new / publish / validate` for blog posts. |
+| [`cms-admin`](cms-admin/) | Binary `pdcms-admin`: Axum + Maud admin web UI. Multi-site nav, blog post CRUD, page CRUD with **per-section visual editor** (Hero / Prose / Cards / CtaBand variants — typed forms, no raw HTML). |
+
+Storage: `<root>/<site>/blog/<slug>.md` (TOML frontmatter + markdown body) and `<root>/<site>/pages/<slug>.toml` (full TOML for typed sections). Same binary services any number of tenant sites; new tenant = new directory.
+
+### Quick start
+
+```bash
+# CLI workflow
+pdcms --root ./content --site plausiden.com new "Hello world"
+pdcms --root ./content --site plausiden.com list
+pdcms --root ./content --site plausiden.com publish hello-world
+
+# Web UI
+PLAUSIDEN_CMS_ADMIN_TOKEN="$(openssl rand -hex 24)" \
+  pdcms-admin --root ./content --bind 127.0.0.1:8095
+# Then point a browser at http://127.0.0.1:8095/
+```
+
+### Section variants (the "graphical" part)
+
+A page is a sequence of typed sections. The admin UI presents one form per variant; new visual shapes land as new variants in a doctrine PR — clients can never inject novel HTML.
+
+- **Hero** — eyebrow / headline / subhead / optional CTA
+- **Prose** — markdown body
+- **Cards** — heading + up to 6 cards (heading, body, optional per-card CTA)
+- **CtaBand** — single big call-to-action band
+
+## Original design intent (still the path)
 
 ## The need
 
@@ -115,6 +150,10 @@ examples/
   plausiden-site/         how a consumer site pulls content at build or runtime
   sacredvote-org/         same, for the SacredVote.org case
 ```
+
+## v0 deviations from the future-layout sketch
+
+What shipped does the same job with a flatter, plainer-Rust layout — no SQLite, no separate auth crate (deferred), no SDK adapters (consumers `path = "../PlausiDen-CMS/cms-core"` or git-dep directly today). Content lives as plain files in git, atomically written. This is intentional — the v0 ceiling is "client edits content in a browser, every save is a file change auditable in `git log`." Scaling from there to the future-layout sketch is mostly additive, not a rewrite.
 
 ## License
 
