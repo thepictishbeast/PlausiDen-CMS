@@ -82,6 +82,26 @@ async fn main() -> anyhow::Result<()> {
         .route("/sites/{site}/pages/new", get(handlers::new_page_form).post(handlers::create_page))
         .route("/sites/{site}/pages/{slug}/edit", get(handlers::edit_page_form).post(handlers::update_page))
         .route("/sites/{site}/pages/{slug}/publish", post(handlers::publish_page))
+        .route(
+            "/sites/{site}/pages/{slug}/sections/new/{kind}",
+            get(handlers::new_section_form).post(handlers::create_section_hero),
+        )
+        .route(
+            "/sites/{site}/pages/{slug}/sections/{idx}/edit",
+            get(handlers::edit_section_form).post(handlers::update_section),
+        )
+        .route(
+            "/sites/{site}/pages/{slug}/sections/{idx}/up",
+            post(handlers::move_section_up),
+        )
+        .route(
+            "/sites/{site}/pages/{slug}/sections/{idx}/down",
+            post(handlers::move_section_down),
+        )
+        .route(
+            "/sites/{site}/pages/{slug}/sections/{idx}/delete",
+            post(handlers::delete_section),
+        )
         .route("/healthz", get(handlers::healthz))
         .with_state(state)
         .layer(TraceLayer::new_for_http());

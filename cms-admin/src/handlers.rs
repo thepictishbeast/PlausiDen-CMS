@@ -7,15 +7,14 @@ use axum::response::{IntoResponse, Redirect, Response};
 use chrono::{Local, NaiveDate};
 use maud::Markup;
 use plausiden_cms_core::{
-    BlogPost, BlogPostFrontmatter, BlogStatus, Page, PageFrontmatter, PageLayout, PageStatus,
-    Section, Site,
+    BlogPost, BlogPostFrontmatter, BlogStatus, CallToAction, Card, Page, PageFrontmatter,
+    PageLayout, PageStatus, Section, Site,
 };
 use serde::Deserialize;
-use std::path::Path as StdPath;
 
 use crate::auth::{
-    AuthSession, COOKIE_NAME, clear_cookie, extract_token, generate_session_token,
-    require_auth_or_401, set_cookie,
+    AuthSession, clear_cookie, extract_token, generate_session_token, require_auth_or_401,
+    set_cookie,
 };
 use crate::state::{AppState, Session};
 use crate::views;
@@ -278,10 +277,8 @@ pub async fn new_page_form(
     AuthSession(_): AuthSession,
     Path(site_name): Path<String>,
 ) -> Markup {
-    let starter = include_starter_sections();
-    views::page_form(
+    views::new_page_form_view(
         &site_name,
-        true,
         "",
         "",
         "",
@@ -289,13 +286,12 @@ pub async fn new_page_form(
         PageLayout::Default,
         Local::now().date_naive(),
         None,
-        &starter,
         None,
     )
 }
 
 #[derive(Debug, Deserialize)]
-pub struct PageForm {
+pub struct NewPageForm {
     pub title: String,
     pub slug: String,
     pub summary: String,
@@ -303,29 +299,56 @@ pub struct PageForm {
     pub layout: String,
     pub updated_at: String,
     pub nav_order: Option<String>,
-    pub sections: String,
 }
 
+/// New-page form posts here — frontmatter only. Created with one
+/// default Hero section so the editor lands on a non-empty page
+/// when redirected to the edit view.
 pub async fn create_page(
     AuthSession(_): AuthSession,
     State(state): State<AppState>,
     Path(site_name): Path<String>,
-    Form(form): Form<PageForm>,
+    Form(form): Form<NewPageForm>,
 ) -> Response {
     let site = Site(site_name.clone());
     let path = state.store.page_path(&site, &form.slug);
     if path.exists() {
-        return page_form_with_error(&site_name, true, &form, "A page with that slug already exists.")
+        return new_page_form_with_error(&site_name, &form, "A page with that slug already exists.")
             .into_response();
     }
-    match build_page(&form) {
-        Ok(page) => match page.write(&path) {
-            Ok(()) => Redirect::to(&format!("/sites/{site_name}/pages")).into_response(),
-            Err(e) => page_form_with_error(&site_name, true, &form, &format!("Disk write failed: {e}"))
-                .into_response(),
+    let updated_at = match parse_date(&form.updated_at) {
+        Ok(d) => d,
+        Err(e) => return new_page_form_with_error(&site_name, &form, e).into_response(),
+    };
+    let nav_order = match parse_nav_order(form.nav_order.as_deref()) {
+        Ok(n) => n,
+        Err(e) => return new_page_form_with_error(&site_name, &form, &e).into_response(),
+    };
+    let page = Page {
+        front: PageFrontmatter {
+            title: form.title.clone(),
+            slug: form.slug.clone(),
+            summary: form.summary.clone(),
+            status: parse_page_status(&form.status),
+            layout: parse_layout(&form.layout),
+            updated_at,
+            nav_order,
         },
-        Err(e) => page_form_with_error(&site_name, true, &form, &e).into_response(),
+        sections: vec![Section::Hero {
+            eyebrow: None,
+            headline: form.title.clone(),
+            subhead: form.summary.clone(),
+            cta: None,
+        }],
+    };
+    if let Err(e) = page.validate(&path) {
+        return new_page_form_with_error(&site_name, &form, &e.to_string()).into_response();
     }
+    if let Err(e) = page.write(&path) {
+        return new_page_form_with_error(&site_name, &form, &format!("Disk write failed: {e}"))
+            .into_response();
+    }
+    Redirect::to(&format!("/sites/{site_name}/pages/{}/edit", form.slug)).into_response()
 }
 
 pub async fn edit_page_form(
@@ -335,49 +358,263 @@ pub async fn edit_page_form(
 ) -> Response {
     let site = Site(site_name.clone());
     match state.store.get_page(&site, &slug) {
-        Ok(Some(p)) => {
-            let toml_sections = sections_to_toml(&p.sections);
-            views::page_form(
-                &site_name,
-                false,
-                &p.front.title,
-                &p.front.slug,
-                &p.front.summary,
-                p.front.status,
-                p.front.layout,
-                p.front.updated_at,
-                p.front.nav_order,
-                &toml_sections,
-                None,
-            )
-            .into_response()
-        }
+        Ok(Some(p)) => views::edit_page_view(
+            &site_name,
+            &p.front.slug,
+            &p.front.title,
+            &p.front.summary,
+            p.front.status,
+            p.front.layout,
+            p.front.updated_at,
+            p.front.nav_order,
+            &p.sections,
+            None,
+            None,
+        )
+        .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, "no such page").into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("load: {e}")).into_response(),
     }
 }
 
+/// Frontmatter-only update. Sections are managed via the per-section
+/// endpoints below.
 pub async fn update_page(
     AuthSession(_): AuthSession,
     State(state): State<AppState>,
     Path((site_name, slug)): Path<(String, String)>,
-    Form(form): Form<PageForm>,
+    Form(form): Form<NewPageForm>,
 ) -> Response {
     if form.slug != slug {
         return (StatusCode::BAD_REQUEST, "slug cannot be changed via edit").into_response();
     }
     let site = Site(site_name.clone());
-    match build_page(&form) {
-        Ok(page) => {
-            let path = state.store.page_path(&site, &slug);
-            match page.write(&path) {
-                Ok(()) => Redirect::to(&format!("/sites/{site_name}/pages")).into_response(),
-                Err(e) => page_form_with_error(&site_name, false, &form, &format!("Disk write failed: {e}"))
-                    .into_response(),
-            }
-        }
-        Err(e) => page_form_with_error(&site_name, false, &form, &e).into_response(),
+    let path = state.store.page_path(&site, &slug);
+    let mut page = match Page::load_from_file(&path) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::NOT_FOUND, format!("load: {e}")).into_response(),
+    };
+    let updated_at = match parse_date(&form.updated_at) {
+        Ok(d) => d,
+        Err(e) => return reload_edit_with_error(&state, &site_name, &slug, e).await,
+    };
+    let nav_order = match parse_nav_order(form.nav_order.as_deref()) {
+        Ok(n) => n,
+        Err(e) => return reload_edit_with_error(&state, &site_name, &slug, &e).await,
+    };
+    page.front.title = form.title;
+    page.front.summary = form.summary;
+    page.front.status = parse_page_status(&form.status);
+    page.front.layout = parse_layout(&form.layout);
+    page.front.updated_at = updated_at;
+    page.front.nav_order = nav_order;
+    if let Err(e) = page.validate(&path) {
+        return reload_edit_with_error(&state, &site_name, &slug, &e.to_string()).await;
     }
+    if let Err(e) = page.write(&path) {
+        return reload_edit_with_error(&state, &site_name, &slug, &format!("write: {e}")).await;
+    }
+    Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Per-section endpoints
+// ---------------------------------------------------------------------------
+
+pub async fn new_section_form(
+    AuthSession(_): AuthSession,
+    Path((site_name, slug, kind)): Path<(String, String, String)>,
+) -> Response {
+    match kind.as_str() {
+        "hero" => views::hero_form(&site_name, &slug, None, "", "", "", "", "", None).into_response(),
+        "prose" => views::prose_form(&site_name, &slug, None, "", None).into_response(),
+        "cards" => views::cards_form(&site_name, &slug, None, "", &[], None).into_response(),
+        "ctaband" => {
+            views::ctaband_form(&site_name, &slug, None, "", "", "", None).into_response()
+        }
+        _ => (StatusCode::BAD_REQUEST, "unknown section kind").into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HeroForm {
+    pub eyebrow: String,
+    pub headline: String,
+    pub subhead: String,
+    pub cta_label: String,
+    pub cta_href: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProseForm {
+    pub markdown: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CardsForm {
+    pub heading: String,
+    pub card_0_heading: String,
+    pub card_0_body: String,
+    pub card_0_cta_label: String,
+    pub card_0_cta_href: String,
+    pub card_1_heading: String,
+    pub card_1_body: String,
+    pub card_1_cta_label: String,
+    pub card_1_cta_href: String,
+    pub card_2_heading: String,
+    pub card_2_body: String,
+    pub card_2_cta_label: String,
+    pub card_2_cta_href: String,
+    pub card_3_heading: String,
+    pub card_3_body: String,
+    pub card_3_cta_label: String,
+    pub card_3_cta_href: String,
+    pub card_4_heading: String,
+    pub card_4_body: String,
+    pub card_4_cta_label: String,
+    pub card_4_cta_href: String,
+    pub card_5_heading: String,
+    pub card_5_body: String,
+    pub card_5_cta_label: String,
+    pub card_5_cta_href: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CtaBandForm {
+    pub headline: String,
+    pub cta_label: String,
+    pub cta_href: String,
+}
+
+pub async fn create_section_hero(
+    AuthSession(_): AuthSession,
+    State(state): State<AppState>,
+    Path((site_name, slug, kind)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    save_section_kind(&state, &site_name, &slug, &kind, None, &body, &headers).await
+}
+
+pub async fn edit_section_form(
+    AuthSession(_): AuthSession,
+    State(state): State<AppState>,
+    Path((site_name, slug, idx)): Path<(String, String, usize)>,
+) -> Response {
+    let site = Site(site_name.clone());
+    let page = match state.store.get_page(&site, &slug) {
+        Ok(Some(p)) => p,
+        _ => return (StatusCode::NOT_FOUND, "no such page").into_response(),
+    };
+    let Some(section) = page.sections.get(idx) else {
+        return (StatusCode::NOT_FOUND, "no such section").into_response();
+    };
+    match section {
+        Section::Hero { eyebrow, headline, subhead, cta } => {
+            let (lbl, href) = cta
+                .as_ref()
+                .map_or((String::new(), String::new()), |c| (c.label.clone(), c.href.clone()));
+            views::hero_form(
+                &site_name,
+                &slug,
+                Some(idx),
+                eyebrow.as_deref().unwrap_or(""),
+                headline,
+                subhead,
+                &lbl,
+                &href,
+                None,
+            )
+            .into_response()
+        }
+        Section::Prose { markdown } => {
+            views::prose_form(&site_name, &slug, Some(idx), markdown, None).into_response()
+        }
+        Section::Cards { heading, items } => views::cards_form(
+            &site_name,
+            &slug,
+            Some(idx),
+            heading.as_deref().unwrap_or(""),
+            items,
+            None,
+        )
+        .into_response(),
+        Section::CtaBand { headline, cta } => views::ctaband_form(
+            &site_name,
+            &slug,
+            Some(idx),
+            headline,
+            &cta.label,
+            &cta.href,
+            None,
+        )
+        .into_response(),
+    }
+}
+
+pub async fn update_section(
+    AuthSession(_): AuthSession,
+    State(state): State<AppState>,
+    Path((site_name, slug, idx)): Path<(String, String, usize)>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let site = Site(site_name.clone());
+    let page = match state.store.get_page(&site, &slug) {
+        Ok(Some(p)) => p,
+        _ => return (StatusCode::NOT_FOUND, "no such page").into_response(),
+    };
+    let Some(existing) = page.sections.get(idx) else {
+        return (StatusCode::NOT_FOUND, "no such section").into_response();
+    };
+    let kind = match existing {
+        Section::Hero { .. } => "hero",
+        Section::Prose { .. } => "prose",
+        Section::Cards { .. } => "cards",
+        Section::CtaBand { .. } => "ctaband",
+    };
+    save_section_kind(&state, &site_name, &slug, kind, Some(idx), &body, &headers).await
+}
+
+pub async fn move_section_up(
+    AuthSession(_): AuthSession,
+    State(state): State<AppState>,
+    Path((site_name, slug, idx)): Path<(String, String, usize)>,
+) -> Response {
+    swap_sections(&state, &site_name, &slug, idx, idx.checked_sub(1)).await
+}
+
+pub async fn move_section_down(
+    AuthSession(_): AuthSession,
+    State(state): State<AppState>,
+    Path((site_name, slug, idx)): Path<(String, String, usize)>,
+) -> Response {
+    swap_sections(&state, &site_name, &slug, idx, Some(idx + 1)).await
+}
+
+pub async fn delete_section(
+    AuthSession(_): AuthSession,
+    State(state): State<AppState>,
+    Path((site_name, slug, idx)): Path<(String, String, usize)>,
+) -> Response {
+    let site = Site(site_name.clone());
+    let path = state.store.page_path(&site, &slug);
+    let mut page = match Page::load_from_file(&path) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::NOT_FOUND, format!("load: {e}")).into_response(),
+    };
+    if idx >= page.sections.len() {
+        return (StatusCode::BAD_REQUEST, "section index out of range").into_response();
+    }
+    page.sections.remove(idx);
+    if let Err(e) = page.validate(&path) {
+        return (StatusCode::BAD_REQUEST, format!("can't leave page in invalid state: {e}"))
+            .into_response();
+    }
+    if let Err(e) = page.write(&path) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")).into_response();
+    }
+    Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
 }
 
 pub async fn publish_page(
@@ -406,7 +643,7 @@ pub async fn publish_page(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn enumerate_sites(root: &StdPath) -> std::io::Result<Vec<String>> {
+fn enumerate_sites(root: &std::path::Path) -> std::io::Result<Vec<String>> {
     let mut out = Vec::new();
     if !root.exists() {
         return Ok(out);
@@ -467,90 +704,18 @@ fn parse_page_status(s: &str) -> PageStatus {
     }
 }
 
-/// Build a typed [`Page`] from raw form fields. Returns a human-
-/// readable error string suitable to surface in the form.
-fn build_page(form: &PageForm) -> Result<Page, String> {
-    let updated_at = parse_date(&form.updated_at)
-        .map_err(|e| e.to_string())?;
-    let nav_order = form
-        .nav_order
-        .as_deref()
-        .map(str::trim)
+fn parse_nav_order(s: Option<&str>) -> Result<Option<u32>, String> {
+    s.map(str::trim)
         .filter(|s| !s.is_empty())
-        .map(|s| s.parse::<u32>().map_err(|_| "Invalid nav order — must be 0-9999.".to_string()))
-        .transpose()?;
-
-    // Parse sections. The TOML the editor types is a fragment that
-    // we wrap with `sections =` to feed serde_toml. Validation on
-    // the resulting Page catches per-section issues with typed
-    // messages.
-    let wrapped = format!("{}\n", form.sections.trim());
-    #[derive(Deserialize)]
-    struct SectionsWrapper {
-        sections: Vec<Section>,
-    }
-    let parsed: SectionsWrapper = toml::from_str(&format!("sections = [\n{wrapped}\n]"))
-        .or_else(|_| {
-            // Allow the user to write `[[sections]]` blocks directly
-            // without bracketing — simpler for hand-editing.
-            toml::from_str(&wrapped)
-        })
-        .map_err(|e| format!("Sections TOML: {e}"))?;
-
-    let page = Page {
-        front: PageFrontmatter {
-            title: form.title.clone(),
-            slug: form.slug.clone(),
-            summary: form.summary.clone(),
-            status: parse_page_status(&form.status),
-            layout: parse_layout(&form.layout),
-            updated_at,
-            nav_order,
-        },
-        sections: parsed.sections,
-    };
-    page.validate(StdPath::new(&format!("{}.toml", form.slug)))
-        .map_err(|e| e.to_string())?;
-    Ok(page)
+        .map(|s| s.parse::<u32>().map_err(|_| "Invalid nav order (0-9999).".to_string()))
+        .transpose()
 }
 
-/// Re-emit a `Vec<Section>` as the TOML fragment the editor sees.
-/// We serialize a wrapper struct and strip the wrapping `[[sections]]`
-/// table-array key so the editor's textarea contains only the
-/// section blocks.
-fn sections_to_toml(sections: &[Section]) -> String {
-    #[derive(serde::Serialize)]
-    struct Wrap<'a> {
-        sections: &'a [Section],
-    }
-    let full = toml::to_string_pretty(&Wrap { sections }).unwrap_or_default();
-    full
-}
-
-/// Default starter content for a new page — gives editors a
-/// working template instead of an empty textarea.
-fn include_starter_sections() -> String {
-    r#"[[sections]]
-kind = "hero"
-headline = "New page"
-subhead = "Replace this subhead with a one-sentence summary of what the page is for."
-
-[[sections]]
-kind = "prose"
-markdown = "Replace this prose with the page body. Markdown is fine: **bold**, _italic_, [links](https://example.com)."
-"#
-    .to_string()
-}
-
-fn page_form_with_error(site: &str, is_new: bool, form: &PageForm, error: &str) -> Markup {
+fn new_page_form_with_error(site: &str, form: &NewPageForm, error: &str) -> Markup {
     let updated_at = parse_date(&form.updated_at).unwrap_or_else(|_| Local::now().date_naive());
-    let nav_order = form
-        .nav_order
-        .as_deref()
-        .and_then(|s| s.trim().parse::<u32>().ok());
-    views::page_form(
+    let nav_order = parse_nav_order(form.nav_order.as_deref()).unwrap_or(None);
+    views::new_page_form_view(
         site,
-        is_new,
         &form.title,
         &form.slug,
         &form.summary,
@@ -558,7 +723,167 @@ fn page_form_with_error(site: &str, is_new: bool, form: &PageForm, error: &str) 
         parse_layout(&form.layout),
         updated_at,
         nav_order,
-        &form.sections,
         Some(error),
     )
+}
+
+async fn reload_edit_with_error(state: &AppState, site: &str, slug: &str, error: &str) -> Response {
+    let site_obj = Site(site.to_string());
+    match state.store.get_page(&site_obj, slug) {
+        Ok(Some(p)) => views::edit_page_view(
+            site,
+            &p.front.slug,
+            &p.front.title,
+            &p.front.summary,
+            p.front.status,
+            p.front.layout,
+            p.front.updated_at,
+            p.front.nav_order,
+            &p.sections,
+            Some(error),
+            None,
+        )
+        .into_response(),
+        _ => (StatusCode::NOT_FOUND, "no such page").into_response(),
+    }
+}
+
+/// Save (create or update) a section of the given kind. The form
+/// body is the raw urlencoded bytes; we deserialize per-variant.
+async fn save_section_kind(
+    state: &AppState,
+    site_name: &str,
+    slug: &str,
+    kind: &str,
+    idx: Option<usize>,
+    body: &[u8],
+    _headers: &HeaderMap,
+) -> Response {
+    let site = Site(site_name.to_string());
+    let path = state.store.page_path(&site, slug);
+    let mut page = match Page::load_from_file(&path) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::NOT_FOUND, format!("load: {e}")).into_response(),
+    };
+    let new_section = match build_section(kind, body) {
+        Ok(s) => s,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    match idx {
+        Some(i) if i < page.sections.len() => page.sections[i] = new_section,
+        Some(_) => return (StatusCode::NOT_FOUND, "section index out of range").into_response(),
+        None => page.sections.push(new_section),
+    }
+    if let Err(e) = page.validate(&path) {
+        return (StatusCode::BAD_REQUEST, format!("validation: {e}")).into_response();
+    }
+    if let Err(e) = page.write(&path) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")).into_response();
+    }
+    Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
+}
+
+fn build_section(kind: &str, body: &[u8]) -> Result<Section, String> {
+    match kind {
+        "hero" => {
+            let f: HeroForm =
+                serde_urlencoded::from_bytes(body).map_err(|e| format!("hero form: {e}"))?;
+            let cta = if f.cta_label.trim().is_empty() {
+                None
+            } else {
+                Some(CallToAction {
+                    label: f.cta_label,
+                    href: f.cta_href,
+                })
+            };
+            Ok(Section::Hero {
+                eyebrow: option_from_string(f.eyebrow),
+                headline: f.headline,
+                subhead: f.subhead,
+                cta,
+            })
+        }
+        "prose" => {
+            let f: ProseForm =
+                serde_urlencoded::from_bytes(body).map_err(|e| format!("prose form: {e}"))?;
+            Ok(Section::Prose { markdown: f.markdown })
+        }
+        "cards" => {
+            let f: CardsForm =
+                serde_urlencoded::from_bytes(body).map_err(|e| format!("cards form: {e}"))?;
+            let raw = [
+                (f.card_0_heading, f.card_0_body, f.card_0_cta_label, f.card_0_cta_href),
+                (f.card_1_heading, f.card_1_body, f.card_1_cta_label, f.card_1_cta_href),
+                (f.card_2_heading, f.card_2_body, f.card_2_cta_label, f.card_2_cta_href),
+                (f.card_3_heading, f.card_3_body, f.card_3_cta_label, f.card_3_cta_href),
+                (f.card_4_heading, f.card_4_body, f.card_4_cta_label, f.card_4_cta_href),
+                (f.card_5_heading, f.card_5_body, f.card_5_cta_label, f.card_5_cta_href),
+            ];
+            let items: Vec<Card> = raw
+                .into_iter()
+                .filter(|(h, b, _, _)| !h.trim().is_empty() && !b.trim().is_empty())
+                .map(|(h, b, cl, ch)| {
+                    let cta = if cl.trim().is_empty() {
+                        None
+                    } else {
+                        Some(CallToAction { label: cl, href: ch })
+                    };
+                    Card {
+                        heading: h,
+                        body: b,
+                        cta,
+                    }
+                })
+                .collect();
+            if items.is_empty() {
+                return Err("Cards section needs at least one filled card slot.".into());
+            }
+            Ok(Section::Cards {
+                heading: option_from_string(f.heading),
+                items,
+            })
+        }
+        "ctaband" => {
+            let f: CtaBandForm =
+                serde_urlencoded::from_bytes(body).map_err(|e| format!("ctaband form: {e}"))?;
+            Ok(Section::CtaBand {
+                headline: f.headline,
+                cta: CallToAction {
+                    label: f.cta_label,
+                    href: f.cta_href,
+                },
+            })
+        }
+        _ => Err(format!("unknown kind: {kind}")),
+    }
+}
+
+fn option_from_string(s: String) -> Option<String> {
+    if s.trim().is_empty() { None } else { Some(s) }
+}
+
+async fn swap_sections(
+    state: &AppState,
+    site_name: &str,
+    slug: &str,
+    idx: usize,
+    other: Option<usize>,
+) -> Response {
+    let Some(other_idx) = other else {
+        return (StatusCode::BAD_REQUEST, "out of range").into_response();
+    };
+    let site = Site(site_name.to_string());
+    let path = state.store.page_path(&site, slug);
+    let mut page = match Page::load_from_file(&path) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::NOT_FOUND, format!("load: {e}")).into_response(),
+    };
+    if idx >= page.sections.len() || other_idx >= page.sections.len() {
+        return (StatusCode::BAD_REQUEST, "out of range").into_response();
+    }
+    page.sections.swap(idx, other_idx);
+    if let Err(e) = page.write(&path) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")).into_response();
+    }
+    Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
 }
