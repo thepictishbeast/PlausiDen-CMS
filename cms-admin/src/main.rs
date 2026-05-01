@@ -78,6 +78,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/sites/{site}/blog/new", get(handlers::new_form).post(handlers::create_post))
         .route("/sites/{site}/blog/{slug}/edit", get(handlers::edit_form).post(handlers::update_post))
         .route("/sites/{site}/blog/{slug}/publish", post(handlers::publish_post))
+        .route("/sites/{site}/pages", get(handlers::list_pages))
+        .route("/sites/{site}/pages/new", get(handlers::new_page_form).post(handlers::create_page))
+        .route("/sites/{site}/pages/{slug}/edit", get(handlers::edit_page_form).post(handlers::update_page))
+        .route("/sites/{site}/pages/{slug}/publish", post(handlers::publish_page))
         .route("/healthz", get(handlers::healthz))
         .with_state(state)
         .layer(TraceLayer::new_for_http());

@@ -5,7 +5,7 @@
 
 use chrono::NaiveDate;
 use maud::{DOCTYPE, Markup, html};
-use plausiden_cms_core::{BlogPost, BlogStatus};
+use plausiden_cms_core::{BlogPost, BlogStatus, Page, PageLayout, PageStatus};
 
 /// Page chrome: head, top bar, footer.
 fn shell(title: &str, body: Markup) -> Markup {
@@ -72,6 +72,12 @@ form.stack label { font-weight: 600; color: var(--ink); font-size: 0.875rem; dis
 form.stack input[type=text], form.stack input[type=password], form.stack input[type=date], form.stack textarea, form.stack select { width: 100%; padding: 0.5rem 0.75rem; border: 1px solid var(--border); border-radius: 0.375rem; font: inherit; background: var(--surface); }
 form.stack textarea { font-family: ui-monospace, 'SF Mono', monospace; min-height: 18rem; }
 .muted { color: var(--ink-muted); font-size: 0.875rem; }
+.content-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+.tab { padding: 0.75rem 1.25rem; text-decoration: none; color: var(--ink-muted); border-bottom: 2px solid transparent; }
+.tab-active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.layout-default { color: var(--ink-muted); }
+.layout-wide { color: hsl(40 90% 35%); font-weight: 600; }
+.layout-landing { color: var(--primary); font-weight: 600; }
 .status-draft { color: var(--ink-muted); font-weight: 600; }
 .status-published { color: var(--success); font-weight: 600; }
 .error { background: hsl(0 72% 95%); border: 1px solid var(--danger); color: var(--danger); padding: 0.75rem 1rem; border-radius: 0.375rem; margin-bottom: 1rem; }
@@ -148,6 +154,10 @@ pub fn posts_page(site: &str, posts: &[BlogPost], flash: Option<&str>) -> Markup
         nav class="muted" {
             a href="/sites" { "Sites" } " / " (site)
         }
+        div class="content-tabs" {
+            a href={ "/sites/" (site) } class="tab tab-active" { "Blog posts" }
+            a href={ "/sites/" (site) "/pages" } class="tab" { "Pages" }
+        }
         h1 { (site) " — Blog posts" }
         @if let Some(f) = flash {
             div class="success-msg" { (f) }
@@ -197,6 +207,177 @@ pub fn posts_page(site: &str, posts: &[BlogPost], flash: Option<&str>) -> Markup
         }
     };
     shell(&format!("{site} blog"), body)
+}
+
+/// Pages list for a site.
+#[must_use]
+pub fn pages_page(site: &str, pages: &[Page], flash: Option<&str>) -> Markup {
+    let body = html! {
+        nav class="muted" {
+            a href="/sites" { "Sites" } " / " (site)
+        }
+        div class="content-tabs" {
+            a href={ "/sites/" (site) } class="tab" { "Blog posts" }
+            a href={ "/sites/" (site) "/pages" } class="tab tab-active" { "Pages" }
+        }
+        h1 { (site) " — Pages" }
+        @if let Some(f) = flash {
+            div class="success-msg" { (f) }
+        }
+        div class="card" {
+            div style="margin-bottom: 1rem;" {
+                a href={ "/sites/" (site) "/pages/new" } class="btn" { "+ New page" }
+            }
+            @if pages.is_empty() {
+                p class="muted" { "No pages yet. Pages are typed-section composed (Hero, Prose, Cards, CtaBand) and live at " code { "content/" (site) "/pages/" } "." }
+            } @else {
+                table {
+                    thead {
+                        tr {
+                            th { "Title" }
+                            th { "Slug" }
+                            th { "Layout" }
+                            th { "Nav" }
+                            th { "Updated" }
+                            th { "Status" }
+                            th { }
+                        }
+                    }
+                    tbody {
+                        @for p in pages {
+                            tr {
+                                td { (p.front.title) }
+                                td { code { (p.front.slug) } }
+                                td {
+                                    @match p.front.layout {
+                                        PageLayout::Default => span class="layout-default" { "default" },
+                                        PageLayout::Wide => span class="layout-wide" { "wide" },
+                                        PageLayout::Landing => span class="layout-landing" { "landing" },
+                                    }
+                                }
+                                td {
+                                    @match p.front.nav_order {
+                                        Some(n) => (n.to_string()),
+                                        None => span class="muted" { "—" },
+                                    }
+                                }
+                                td { (p.front.updated_at) }
+                                td {
+                                    @match p.front.status {
+                                        PageStatus::Draft => span class="status-draft" { "Draft" },
+                                        PageStatus::Published => span class="status-published" { "Published" },
+                                    }
+                                }
+                                td class="row-actions" {
+                                    a href={ "/sites/" (site) "/pages/" (p.front.slug) "/edit" } { "Edit" }
+                                    @if p.front.status == PageStatus::Draft {
+                                        form action={ "/sites/" (site) "/pages/" (p.front.slug) "/publish" } method="post" {
+                                            button type="submit" class="btn btn-success" style="font-size: 0.875rem; padding: 0.25rem 0.625rem;" { "Publish" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    shell(&format!("{site} pages"), body)
+}
+
+/// Create / edit form for a page. v0 splits frontmatter into typed
+/// inputs and lets the editor modify sections as a single TOML
+/// textarea — the typed Section enum still validates on save, so
+/// invalid TOML can't reach disk. A section-by-section visual
+/// editor is the next iteration.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+pub fn page_form(
+    site: &str,
+    is_new: bool,
+    title: &str,
+    slug: &str,
+    summary: &str,
+    status: PageStatus,
+    layout: PageLayout,
+    updated_at: NaiveDate,
+    nav_order: Option<u32>,
+    sections_toml: &str,
+    error: Option<&str>,
+) -> Markup {
+    let action = if is_new {
+        format!("/sites/{site}/pages/new")
+    } else {
+        format!("/sites/{site}/pages/{slug}/edit")
+    };
+    let heading = if is_new { "New page" } else { "Edit page" };
+    let body = html! {
+        nav class="muted" {
+            a href="/sites" { "Sites" } " / "
+            a href={ "/sites/" (site) } { (site) } " / "
+            a href={ "/sites/" (site) "/pages" } { "Pages" } " / "
+            (heading)
+        }
+        h1 { (heading) }
+        @if let Some(e) = error {
+            div class="error" { (e) }
+        }
+        form action=(action) method="post" class="stack card" {
+            div {
+                label for="title" { "Title" }
+                input type="text" id="title" name="title" value=(title) required;
+            }
+            div {
+                label for="slug" { "Slug" }
+                input type="text" id="slug" name="slug" value=(slug) required readonly[!is_new];
+                p class="muted" { "Lowercase ASCII + dashes only. Cannot change after creation." }
+            }
+            div {
+                label for="summary" { "Summary" }
+                input type="text" id="summary" name="summary" value=(summary) maxlength="200" required;
+                p class="muted" { "Used as " code { "<meta name=\"description\">" } ". ≤200 chars." }
+            }
+            div {
+                label for="layout" { "Layout" }
+                select id="layout" name="layout" {
+                    option value="default" selected[layout == PageLayout::Default] { "Default — standard column" }
+                    option value="wide"    selected[layout == PageLayout::Wide]    { "Wide — hero breaks out" }
+                    option value="landing" selected[layout == PageLayout::Landing] { "Landing — full-bleed" }
+                }
+            }
+            div {
+                label for="nav_order" { "Nav order (optional)" }
+                input type="number" id="nav_order" name="nav_order" value=[nav_order.map(|n| n.to_string())] min="0" max="9999";
+                p class="muted" { "Lower numbers come first in the main nav. Leave blank to omit from the nav." }
+            }
+            div {
+                label for="updated_at" { "Last updated" }
+                input type="date" id="updated_at" name="updated_at" value=(updated_at.format("%Y-%m-%d").to_string()) required;
+            }
+            div {
+                label for="status" { "Status" }
+                select id="status" name="status" {
+                    option value="draft" selected[status == PageStatus::Draft] { "Draft" }
+                    option value="published" selected[status == PageStatus::Published] { "Published" }
+                }
+            }
+            div {
+                label for="sections" { "Sections (TOML)" }
+                textarea id="sections" name="sections" required { (sections_toml) }
+                p class="muted" {
+                    "Typed Section enum: " code { "hero" } ", " code { "prose" } ", " code { "cards" } ", " code { "ctaband" } ". "
+                    "An invalid shape is rejected on save — the file never lands in a partial state. "
+                    "A graphical section-by-section editor is the next admin iteration."
+                }
+            }
+            div class="row-actions" {
+                button type="submit" class="btn" { "Save" }
+                a href={ "/sites/" (site) "/pages" } class="btn btn-secondary" { "Cancel" }
+            }
+        }
+    };
+    shell(heading, body)
 }
 
 /// Edit / create form for a blog post.

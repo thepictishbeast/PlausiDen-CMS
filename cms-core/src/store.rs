@@ -124,12 +124,85 @@ impl Store {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    /// Path to the directory holding pages for `site`.
+    #[must_use]
+    pub fn pages_dir(&self, site: &Site) -> PathBuf {
+        self.root.join(&site.0).join("pages")
+    }
+
+    /// Path for a specific page slug. Pages live in `.toml` files
+    /// because their content is structured (typed sections), not
+    /// prose+frontmatter the way blog posts are.
+    #[must_use]
+    pub fn page_path(&self, site: &Site, slug: &str) -> PathBuf {
+        self.pages_dir(site).join(format!("{slug}.toml"))
+    }
+
+    /// List every page for `site`. Stable lexical-by-slug order;
+    /// admin UI sorts further by `nav_order` when building nav menus.
+    ///
+    /// # Errors
+    /// First per-file load failure is surfaced; better to know one
+    /// page is malformed than to silently skip it.
+    pub fn list_pages(&self, site: &Site) -> Result<Vec<Page>, ContentError> {
+        let dir = self.pages_dir(site);
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut entries: Vec<PathBuf> = WalkDir::new(&dir)
+            .min_depth(1)
+            .max_depth(1)
+            .into_iter()
+            .filter_map(Result::ok)
+            .map(|e| e.into_path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("toml"))
+            .collect();
+        entries.sort();
+        let mut out = Vec::with_capacity(entries.len());
+        for p in entries {
+            out.push(Page::load_from_file(&p)?);
+        }
+        Ok(out)
+    }
+
+    /// Pages with `status = published`, sorted by `nav_order`
+    /// (Some(N) ascending; None last).
+    ///
+    /// # Errors
+    /// Same as [`Self::list_pages`].
+    pub fn list_published_pages(&self, site: &Site) -> Result<Vec<Page>, ContentError> {
+        let mut pages = self.list_pages(site)?;
+        pages.retain(|p| p.front.status == crate::page::PageStatus::Published);
+        pages.sort_by(|a, b| match (a.front.nav_order, b.front.nav_order) {
+            (Some(x), Some(y)) => x.cmp(&y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.front.slug.cmp(&b.front.slug),
+        });
+        Ok(pages)
+    }
+
+    /// Get a specific page by slug. Returns `None` if missing.
+    ///
+    /// # Errors
+    /// Same as [`Self::list_pages`].
+    pub fn get_page(&self, site: &Site, slug: &str) -> Result<Option<Page>, ContentError> {
+        let path = self.page_path(site, slug);
+        if !path.exists() {
+            return Ok(None);
+        }
+        Ok(Some(Page::load_from_file(&path)?))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::blog::{BlogPost, BlogPostFrontmatter, BlogStatus};
+    use crate::page::{
+        CallToAction, Page, PageFrontmatter, PageLayout, PageStatus, Section,
+    };
     use chrono::NaiveDate;
 
     fn fixture_post(slug: &str, status: BlogStatus, year: i32) -> BlogPost {
@@ -199,5 +272,104 @@ mod tests {
         let store = Store::new(dir.path());
         let site = Site::plausiden_com();
         assert!(store.get_post(&site, "nope").unwrap().is_none());
+    }
+
+    fn fixture_page(slug: &str, status: PageStatus, nav: Option<u32>) -> Page {
+        Page {
+            front: PageFrontmatter {
+                title: format!("Page {slug}"),
+                slug: slug.to_string(),
+                summary: "A summary line for SEO.".into(),
+                status,
+                layout: PageLayout::Default,
+                updated_at: NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(),
+                nav_order: nav,
+            },
+            sections: vec![Section::Hero {
+                eyebrow: None,
+                headline: format!("{slug} headline"),
+                subhead: "Subhead.".into(),
+                cta: Some(CallToAction {
+                    label: "Click".into(),
+                    href: "/x".into(),
+                }),
+            }],
+        }
+    }
+
+    #[test]
+    fn list_pages_returns_all_in_lexical_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let site = Site::plausiden_com();
+        std::fs::create_dir_all(store.pages_dir(&site)).unwrap();
+        for s in ["c", "a", "b"] {
+            fixture_page(s, PageStatus::Draft, None)
+                .write(&store.page_path(&site, s))
+                .unwrap();
+        }
+        let names: Vec<String> = store
+            .list_pages(&site)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.front.slug)
+            .collect();
+        assert_eq!(names, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn list_published_pages_sorts_by_nav_order_then_slug() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let site = Site::plausiden_com();
+        std::fs::create_dir_all(store.pages_dir(&site)).unwrap();
+        // home (nav=1), services (nav=2), unranked (nav=None), draft (skipped)
+        fixture_page("home", PageStatus::Published, Some(1))
+            .write(&store.page_path(&site, "home"))
+            .unwrap();
+        fixture_page("services", PageStatus::Published, Some(2))
+            .write(&store.page_path(&site, "services"))
+            .unwrap();
+        fixture_page("unranked", PageStatus::Published, None)
+            .write(&store.page_path(&site, "unranked"))
+            .unwrap();
+        fixture_page("draft-page", PageStatus::Draft, Some(0))
+            .write(&store.page_path(&site, "draft-page"))
+            .unwrap();
+        let names: Vec<String> = store
+            .list_published_pages(&site)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.front.slug)
+            .collect();
+        assert_eq!(names, vec!["home", "services", "unranked"]);
+    }
+
+    #[test]
+    fn get_page_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let site = Site::plausiden_com();
+        std::fs::create_dir_all(store.pages_dir(&site)).unwrap();
+        let p = fixture_page("about", PageStatus::Draft, None);
+        p.write(&store.page_path(&site, "about")).unwrap();
+        let loaded = store.get_page(&site, "about").unwrap().unwrap();
+        assert_eq!(loaded.front, p.front);
+    }
+
+    #[test]
+    fn get_page_missing_returns_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let site = Site::plausiden_com();
+        assert!(store.get_page(&site, "nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn missing_pages_dir_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let site = Site::plausiden_com();
+        assert!(store.list_pages(&site).unwrap().is_empty());
     }
 }
