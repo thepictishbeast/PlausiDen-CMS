@@ -1,0 +1,13 @@
+target/
+Cargo.lock
+*.swp
+*~
+.DS_Store
+
+# Local content-store fixtures (the canonical store lives elsewhere)
+cms-store/
+/tmp/
+
+# Python bytecode
+__pycache__/
+*.pyc

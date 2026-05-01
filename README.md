@@ -13,7 +13,7 @@
 
 # PlausiDen-CMS
 
-> **Scaffold only.** Implementation deferred per [`PlausiDen-Meta/PRIORITY.md`](https://github.com/thepictishbeast/PlausiDen-Meta/blob/main/PRIORITY.md) trigger gating. This repo exists as a name reservation and design anchor — do not build against it.
+> **Bootstrap landed 2026-04-30.** First-cut content substrate (typed page TOML + filesystem storage adapter + signed audit log) ships in the `cms-core` crate. Per-site directory layout is the wire format; admin web surface and WebAuthn integration are next milestones.
 
 Generic content management substrate for PlausiDen-namespace marketing / brochure sites. Intended to power **`plausiden-site`** (plausiden.com), **`SacredVote.org`** (marketing), and any future outward-facing marketing surface from a single codebase, with per-site theming and content stored independently.
 

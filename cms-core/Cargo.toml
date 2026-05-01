@@ -1,0 +1,24 @@
+[package]
+name = "cms-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PlausiDen-CMS core: typed page schema, storage adapter, signed audit log."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+ed25519-dalek = { workspace = true }
+zeroize = { workspace = true }
+chacha20poly1305 = { workspace = true }
+rand = { workspace = true }
+walkdir = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+tempfile = { workspace = true }
