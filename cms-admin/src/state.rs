@@ -1,6 +1,6 @@
 //! Shared application state — content store + session map + admin token.
 
-use plausiden_cms_core::Store;
+use plausiden_cms_core::{AuditLog, Store};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -20,6 +20,8 @@ pub struct AppState {
     /// Root content directory; surfaced for "you're looking at
     /// this disk path" UI.
     pub root: PathBuf,
+    /// Append-only audit log for admin actions.
+    pub audit: AuditLog,
 }
 
 impl AppState {
@@ -30,6 +32,7 @@ impl AppState {
             store: Store::new(root.clone()),
             admin_token: Arc::new(admin_token),
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            audit: AuditLog::new(&root),
             root,
         }
     }

@@ -102,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
             "/sites/{site}/pages/{slug}/sections/{idx}/delete",
             post(handlers::delete_section),
         )
+        .route("/audit", get(handlers::audit_view))
         .route("/healthz", get(handlers::healthz))
         .with_state(state)
         .layer(TraceLayer::new_for_http());

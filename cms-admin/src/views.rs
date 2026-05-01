@@ -6,7 +6,8 @@
 use chrono::NaiveDate;
 use maud::{DOCTYPE, Markup, html};
 use plausiden_cms_core::{
-    BlogPost, BlogStatus, CallToAction, Card, Page, PageLayout, PageStatus, Section,
+    AuditAction, AuditEvent, BlogPost, BlogStatus, CallToAction, Card, Page, PageLayout,
+    PageStatus, Section,
 };
 
 /// Page chrome: head, top bar, footer.
@@ -24,8 +25,11 @@ fn shell(title: &str, body: Markup) -> Markup {
                 header {
                     nav {
                         a href="/sites" class="brand" { "PlausiDen-CMS" }
-                        form action="/logout" method="post" class="logout-form" {
-                            button type="submit" class="link-button" { "Log out" }
+                        div class="nav-links" {
+                            a href="/audit" class="nav-link" { "Audit log" }
+                            form action="/logout" method="post" class="logout-form" {
+                                button type="submit" class="link-button" { "Log out" }
+                            }
                         }
                     }
                 }
@@ -77,6 +81,15 @@ form.stack textarea { font-family: ui-monospace, 'SF Mono', monospace; min-heigh
 .content-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
 .tab { padding: 0.75rem 1.25rem; text-decoration: none; color: var(--ink-muted); border-bottom: 2px solid transparent; }
 .tab-active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.nav-links { display: flex; align-items: center; gap: 1rem; }
+.nav-link { color: var(--ink-muted); text-decoration: none; font-size: 0.9375rem; }
+.nav-link:hover { color: var(--primary); }
+.audit-table { font-family: ui-monospace, 'SF Mono', monospace; font-size: 0.8125rem; }
+.audit-table .ts { color: var(--ink-muted); white-space: nowrap; }
+.audit-action-login { color: var(--success); }
+.audit-action-login_failed { color: var(--danger); font-weight: 600; }
+.audit-action-page_published, .audit-action-post_published { color: var(--success); font-weight: 600; }
+.audit-action-section_deleted { color: var(--danger); }
 .layout-default { color: var(--ink-muted); }
 .layout-wide { color: hsl(40 90% 35%); font-weight: 600; }
 .layout-landing { color: var(--primary); font-weight: 600; }
@@ -702,6 +715,97 @@ fn section_breadcrumb(site: &str, slug: &str, title: &str) -> Markup {
             (title)
         }
         h1 { (title) }
+    }
+}
+
+/// Audit log view — most-recent-first listing of admin actions.
+#[must_use]
+pub fn audit_page(events: &[AuditEvent], log_path: &str) -> Markup {
+    let body = html! {
+        h1 { "Audit log" }
+        p class="muted" {
+            "Append-only log at " code { (log_path) } ". Every admin action lands a JSON line; "
+            "the log answers " strong { "who changed what when" } ", never " strong { "what the change looked like" } " (that's git's job)."
+        }
+        @if events.is_empty() {
+            div class="card" {
+                p class="muted" { "No audit events yet." }
+            }
+        } @else {
+            div class="card" {
+                table class="audit-table" {
+                    thead {
+                        tr {
+                            th { "Timestamp (UTC)" }
+                            th { "Site" }
+                            th { "Actor" }
+                            th { "Action" }
+                            th { "Detail" }
+                        }
+                    }
+                    tbody {
+                        @for ev in events.iter().rev() {
+                            tr {
+                                td class="ts" { (ev.ts.format("%Y-%m-%d %H:%M:%S").to_string()) }
+                                td { (ev.site) }
+                                td { (ev.actor) }
+                                td { (audit_action_label(&ev.action)) }
+                                td { (audit_action_detail(&ev.action)) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    shell("Audit log", body)
+}
+
+fn audit_action_label(action: &AuditAction) -> Markup {
+    let (label, css_kind) = match action {
+        AuditAction::Login => ("login", "login"),
+        AuditAction::LoginFailed => ("login (failed)", "login_failed"),
+        AuditAction::Logout => ("logout", "logout"),
+        AuditAction::PostCreated { .. } => ("post.created", "post_created"),
+        AuditAction::PostUpdated { .. } => ("post.updated", "post_updated"),
+        AuditAction::PostPublished { .. } => ("post.published", "post_published"),
+        AuditAction::PageCreated { .. } => ("page.created", "page_created"),
+        AuditAction::PageFrontmatterUpdated { .. } => ("page.frontmatter", "page_frontmatter"),
+        AuditAction::PagePublished { .. } => ("page.published", "page_published"),
+        AuditAction::SectionAdded { .. } => ("section.added", "section_added"),
+        AuditAction::SectionUpdated { .. } => ("section.updated", "section_updated"),
+        AuditAction::SectionMoved { .. } => ("section.moved", "section_moved"),
+        AuditAction::SectionDeleted { .. } => ("section.deleted", "section_deleted"),
+    };
+    let cls = format!("audit-action-{css_kind}");
+    html! {
+        span class=(cls) { (label) }
+    }
+}
+
+fn audit_action_detail(action: &AuditAction) -> Markup {
+    html! {
+        @match action {
+            AuditAction::Login | AuditAction::LoginFailed | AuditAction::Logout => "",
+            AuditAction::PostCreated { slug } |
+            AuditAction::PostUpdated { slug } |
+            AuditAction::PostPublished { slug } |
+            AuditAction::PageCreated { slug } |
+            AuditAction::PageFrontmatterUpdated { slug } |
+            AuditAction::PagePublished { slug } => {
+                code { (slug) }
+            }
+            AuditAction::SectionAdded { slug, kind } => {
+                code { (slug) } " " (kind)
+            }
+            AuditAction::SectionUpdated { slug, idx } |
+            AuditAction::SectionDeleted { slug, idx } => {
+                code { (slug) } " §" (idx)
+            }
+            AuditAction::SectionMoved { slug, from, to } => {
+                code { (slug) } " §" (from) " → §" (to)
+            }
+        }
     }
 }
 

@@ -7,8 +7,8 @@ use axum::response::{IntoResponse, Redirect, Response};
 use chrono::{Local, NaiveDate};
 use maud::Markup;
 use plausiden_cms_core::{
-    BlogPost, BlogPostFrontmatter, BlogStatus, CallToAction, Card, Page, PageFrontmatter,
-    PageLayout, PageStatus, Section, Site,
+    AuditAction, AuditEvent, BlogPost, BlogPostFrontmatter, BlogStatus, CallToAction, Card, Page,
+    PageFrontmatter, PageLayout, PageStatus, Section, Site,
 };
 use serde::Deserialize;
 
@@ -22,6 +22,15 @@ use crate::views;
 /// Health check — bypasses auth so a load balancer can probe it.
 pub async fn healthz() -> &'static str {
     "ok"
+}
+
+/// Audit log viewer — auth-gated, tails the last 200 events.
+pub async fn audit_view(
+    AuthSession(_): AuthSession,
+    State(state): State<AppState>,
+) -> Response {
+    let events = state.audit.tail(200).unwrap_or_default();
+    views::audit_page(&events, &state.audit.path().display().to_string()).into_response()
 }
 
 /// `/` → bounce based on auth state.
@@ -53,6 +62,9 @@ pub async fn login_submit(
 ) -> Response {
     if !state.verify_token(&form.token) {
         tracing::warn!("admin login: bad token");
+        let _ = state
+            .audit
+            .append(&AuditEvent::now("(no-site)", "(unauthenticated)", AuditAction::LoginFailed));
         return (StatusCode::UNAUTHORIZED, views::login_page(Some("Invalid token."))).into_response();
     }
     let token = generate_session_token();
@@ -71,6 +83,7 @@ pub async fn login_submit(
         HeaderValue::from_str(&cookie).expect("cookie value is ASCII"),
     );
     tracing::info!("admin login OK");
+    let _ = state.audit.append(&AuditEvent::now("(all)", "admin", AuditAction::Login));
     (StatusCode::SEE_OTHER, headers, [(header::LOCATION, "/sites")]).into_response()
 }
 
@@ -83,6 +96,7 @@ pub async fn logout(
             map.remove(&token);
         }
     }
+    let _ = state.audit.append(&AuditEvent::now("(all)", "admin", AuditAction::Logout));
     let mut h = HeaderMap::new();
     h.insert(
         header::SET_COOKIE,
@@ -173,6 +187,13 @@ pub async fn create_post(
         return form_with_error(&site_name, true, &form, &format!("Disk write failed: {e}"))
             .into_response();
     }
+    let _ = state.audit.append(&AuditEvent::now(
+        &site_name,
+        "admin",
+        AuditAction::PostCreated {
+            slug: form.slug.clone(),
+        },
+    ));
     Redirect::to(&format!("/sites/{site_name}")).into_response()
 }
 
@@ -235,6 +256,11 @@ pub async fn update_post(
         return form_with_error(&site_name, false, &form, &format!("Disk write failed: {e}"))
             .into_response();
     }
+    let _ = state.audit.append(&AuditEvent::now(
+        &site_name,
+        "admin",
+        AuditAction::PostUpdated { slug: slug.clone() },
+    ));
     Redirect::to(&format!("/sites/{site_name}")).into_response()
 }
 
@@ -256,6 +282,11 @@ pub async fn publish_post(
     if let Err(e) = post.write(&path) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")).into_response();
     }
+    let _ = state.audit.append(&AuditEvent::now(
+        &site_name,
+        "admin",
+        AuditAction::PostPublished { slug: slug.clone() },
+    ));
     Redirect::to(&format!("/sites/{site_name}")).into_response()
 }
 
@@ -348,6 +379,13 @@ pub async fn create_page(
         return new_page_form_with_error(&site_name, &form, &format!("Disk write failed: {e}"))
             .into_response();
     }
+    let _ = state.audit.append(&AuditEvent::now(
+        &site_name,
+        "admin",
+        AuditAction::PageCreated {
+            slug: form.slug.clone(),
+        },
+    ));
     Redirect::to(&format!("/sites/{site_name}/pages/{}/edit", form.slug)).into_response()
 }
 
@@ -414,6 +452,11 @@ pub async fn update_page(
     if let Err(e) = page.write(&path) {
         return reload_edit_with_error(&state, &site_name, &slug, &format!("write: {e}")).await;
     }
+    let _ = state.audit.append(&AuditEvent::now(
+        &site_name,
+        "admin",
+        AuditAction::PageFrontmatterUpdated { slug: slug.clone() },
+    ));
     Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
 }
 
@@ -614,6 +657,14 @@ pub async fn delete_section(
     if let Err(e) = page.write(&path) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")).into_response();
     }
+    let _ = state.audit.append(&AuditEvent::now(
+        &site_name,
+        "admin",
+        AuditAction::SectionDeleted {
+            slug: slug.clone(),
+            idx,
+        },
+    ));
     Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
 }
 
@@ -636,6 +687,11 @@ pub async fn publish_page(
     if let Err(e) = page.write(&path) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")).into_response();
     }
+    let _ = state.audit.append(&AuditEvent::now(
+        &site_name,
+        "admin",
+        AuditAction::PagePublished { slug: slug.clone() },
+    ));
     Redirect::to(&format!("/sites/{site_name}/pages")).into_response()
 }
 
@@ -769,17 +825,30 @@ async fn save_section_kind(
         Ok(s) => s,
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
-    match idx {
-        Some(i) if i < page.sections.len() => page.sections[i] = new_section,
+    let action = match idx {
+        Some(i) if i < page.sections.len() => {
+            page.sections[i] = new_section;
+            AuditAction::SectionUpdated {
+                slug: slug.to_string(),
+                idx: i,
+            }
+        }
         Some(_) => return (StatusCode::NOT_FOUND, "section index out of range").into_response(),
-        None => page.sections.push(new_section),
-    }
+        None => {
+            page.sections.push(new_section);
+            AuditAction::SectionAdded {
+                slug: slug.to_string(),
+                kind: kind.to_string(),
+            }
+        }
+    };
     if let Err(e) = page.validate(&path) {
         return (StatusCode::BAD_REQUEST, format!("validation: {e}")).into_response();
     }
     if let Err(e) = page.write(&path) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")).into_response();
     }
+    let _ = state.audit.append(&AuditEvent::now(site_name, "admin", action));
     Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
 }
 
@@ -885,5 +954,14 @@ async fn swap_sections(
     if let Err(e) = page.write(&path) {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("write: {e}")).into_response();
     }
+    let _ = state.audit.append(&AuditEvent::now(
+        site_name,
+        "admin",
+        AuditAction::SectionMoved {
+            slug: slug.to_string(),
+            from: idx,
+            to: other_idx,
+        },
+    ));
     Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
 }

@@ -35,10 +35,12 @@
 
 #![doc(html_no_source)]
 
+pub mod audit;
 pub mod blog;
 pub mod page;
 pub mod store;
 
+pub use audit::{AuditAction, AuditEvent, AuditLog};
 pub use blog::{BlogPost, BlogPostFrontmatter, BlogStatus};
 pub use page::{Card, CallToAction, Page, PageFrontmatter, PageLayout, PageStatus, Section};
 pub use store::{ContentError, Site, Store};
