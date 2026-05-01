@@ -1,0 +1,22 @@
+[package]
+name = "plausiden-cms-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "PlausiDen-CMS CLI: pdcms — list/new/validate content for marketing sites."
+
+[[bin]]
+name = "pdcms"
+path = "src/main.rs"
+
+[dependencies]
+plausiden-cms-core = { path = "../cms-core" }
+clap.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+slug.workspace = true
+
+[lints]
+workspace = true
