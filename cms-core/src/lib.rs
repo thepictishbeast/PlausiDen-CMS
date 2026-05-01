@@ -36,7 +36,9 @@
 #![doc(html_no_source)]
 
 pub mod blog;
+pub mod page;
 pub mod store;
 
 pub use blog::{BlogPost, BlogPostFrontmatter, BlogStatus};
+pub use page::{Card, CallToAction, Page, PageFrontmatter, PageLayout, PageStatus, Section};
 pub use store::{ContentError, Site, Store};

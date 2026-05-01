@@ -1,6 +1,7 @@
 //! On-disk content store. Per-site, per-content-type directories.
 
 use crate::blog::{BlogError, BlogPost};
+use crate::page::{Page, PageError};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -26,6 +27,9 @@ pub enum ContentError {
     /// A specific blog post failed to load.
     #[error(transparent)]
     Blog(#[from] BlogError),
+    /// A specific page failed to load.
+    #[error(transparent)]
+    Page(#[from] PageError),
     /// I/O at the directory level.
     #[error("io: {0}")]
     Io(#[from] std::io::Error),

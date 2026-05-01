@@ -240,7 +240,11 @@ fn split_frontmatter(raw: &str) -> Option<(&str, &str)> {
 /// dashes, no leading or trailing dash. Refuses underscores +
 /// uppercase to avoid the case where a content move breaks URLs
 /// because of a single capitalized character.
-fn is_valid_slug(s: &str) -> bool {
+///
+/// Public so [`crate::page::Page`] can apply the same rule without
+/// duplicating the implementation.
+#[must_use]
+pub fn is_valid_slug(s: &str) -> bool {
     if s.is_empty() || s.starts_with('-') || s.ends_with('-') {
         return false;
     }
