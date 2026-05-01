@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cms-core", "cms-cli"]
+members = ["cms-core", "cms-cli", "cms-admin"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,6 +19,17 @@ clap = { version = "4", features = ["derive"] }
 walkdir = "2"
 slug = "0.1"
 pulldown-cmark = "0.12"
+
+# Admin web UI
+axum = { version = "0.8", default-features = false, features = ["http1", "form", "tokio", "tower-log"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs", "sync", "time", "net"] }
+maud = "0.27"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["limit", "trace"] }
+http = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
