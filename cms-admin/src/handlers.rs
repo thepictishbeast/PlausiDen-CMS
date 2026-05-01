@@ -668,6 +668,19 @@ pub async fn delete_section(
     Redirect::to(&format!("/sites/{site_name}/pages/{slug}/edit")).into_response()
 }
 
+pub async fn preview_page(
+    AuthSession(_): AuthSession,
+    State(state): State<AppState>,
+    Path((site_name, slug)): Path<(String, String)>,
+) -> Response {
+    let site = Site(site_name.clone());
+    match state.store.get_page(&site, &slug) {
+        Ok(Some(p)) => views::page_preview(&site_name, &p).into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "no such page").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("load: {e}")).into_response(),
+    }
+}
+
 pub async fn publish_page(
     headers: HeaderMap,
     State(state): State<AppState>,

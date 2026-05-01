@@ -82,6 +82,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/sites/{site}/pages/new", get(handlers::new_page_form).post(handlers::create_page))
         .route("/sites/{site}/pages/{slug}/edit", get(handlers::edit_page_form).post(handlers::update_page))
         .route("/sites/{site}/pages/{slug}/publish", post(handlers::publish_page))
+        .route("/sites/{site}/pages/{slug}/preview", get(handlers::preview_page))
         .route(
             "/sites/{site}/pages/{slug}/sections/new/{kind}",
             get(handlers::new_section_form).post(handlers::create_section_hero),

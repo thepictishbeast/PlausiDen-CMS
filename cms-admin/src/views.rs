@@ -90,6 +90,30 @@ form.stack textarea { font-family: ui-monospace, 'SF Mono', monospace; min-heigh
 .audit-action-login_failed { color: var(--danger); font-weight: 600; }
 .audit-action-page_published, .audit-action-post_published { color: var(--success); font-weight: 600; }
 .audit-action-section_deleted { color: var(--danger); }
+.preview-frame { background: var(--surface); border: 2px dashed var(--border); border-radius: 0.5rem; padding: 2rem; margin-top: 1rem; }
+.preview-frame .preview-banner { display: inline-block; padding: 0.25rem 0.75rem; background: hsl(40 90% 95%); border: 1px solid hsl(40 90% 80%); border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600; color: hsl(40 90% 25%); margin-bottom: 1.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.preview-hero { padding: 3rem 0; text-align: center; }
+.preview-hero .eyebrow { display: block; font-size: 0.875rem; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 0.5rem; }
+.preview-hero .headline { font-size: 2.5rem; font-weight: 700; margin: 0 0 0.5rem; color: var(--ink); line-height: 1.1; }
+.preview-hero .subhead { font-size: 1.125rem; color: var(--ink-muted); margin: 0 0 1.5rem; }
+.preview-hero .cta { display: inline-block; padding: 0.75rem 1.5rem; background: var(--primary); color: white; text-decoration: none; border-radius: 0.375rem; font-weight: 600; }
+.preview-prose { padding: 1rem 0; }
+.preview-prose h1, .preview-prose h2, .preview-prose h3 { color: var(--ink); }
+.preview-prose p { color: var(--ink); line-height: 1.7; }
+.preview-prose code { background: var(--surface-muted); padding: 0.125rem 0.375rem; border-radius: 0.25rem; font-size: 0.875em; }
+.preview-cards { padding: 1rem 0; }
+.preview-cards .heading { font-size: 1.5rem; font-weight: 600; margin: 0 0 1rem; }
+.preview-cards .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; }
+.preview-cards .card { background: var(--surface-muted); border: 1px solid var(--border); border-radius: 0.5rem; padding: 1rem; }
+.preview-cards .card .card-heading { font-weight: 600; margin: 0 0 0.5rem; color: var(--ink); }
+.preview-cards .card .card-body { color: var(--ink-muted); margin: 0 0 0.75rem; font-size: 0.9375rem; }
+.preview-cards .card .card-cta { color: var(--primary); text-decoration: none; font-size: 0.875rem; font-weight: 600; }
+.preview-ctaband { background: var(--primary); color: white; padding: 2rem; border-radius: 0.5rem; text-align: center; margin: 1rem 0; }
+.preview-ctaband .headline { font-size: 1.5rem; font-weight: 700; margin: 0 0 1rem; }
+.preview-ctaband .cta { display: inline-block; padding: 0.625rem 1.25rem; background: white; color: var(--primary); text-decoration: none; border-radius: 0.375rem; font-weight: 600; }
+.preview-status { padding: 0.5rem 1rem; background: hsl(0 0% 95%); border-left: 4px solid var(--ink-muted); margin-bottom: 1rem; font-size: 0.875rem; }
+.preview-status.draft { background: hsl(40 90% 96%); border-left-color: hsl(40 90% 50%); color: hsl(40 90% 25%); }
+.preview-status.published { background: hsl(160 60% 96%); border-left-color: var(--success); color: hsl(160 60% 25%); }
 .layout-default { color: var(--ink-muted); }
 .layout-wide { color: hsl(40 90% 35%); font-weight: 600; }
 .layout-landing { color: var(--primary); font-weight: 600; }
@@ -299,6 +323,7 @@ pub fn pages_page(site: &str, pages: &[Page], flash: Option<&str>) -> Markup {
                                 }
                                 td class="row-actions" {
                                     a href={ "/sites/" (site) "/pages/" (p.front.slug) "/edit" } { "Edit" }
+                                    a href={ "/sites/" (site) "/pages/" (p.front.slug) "/preview" } { "Preview" }
                                     @if p.front.status == PageStatus::Draft {
                                         form action={ "/sites/" (site) "/pages/" (p.front.slug) "/publish" } method="post" {
                                             button type="submit" class="btn btn-success" style="font-size: 0.875rem; padding: 0.25rem 0.625rem;" { "Publish" }
@@ -379,6 +404,9 @@ pub fn edit_page_view(
             "Edit"
         }
         h1 { "Edit: " (title) }
+        div style="margin-bottom: 1rem;" {
+            a href={ "/sites/" (site) "/pages/" (slug) "/preview" } class="btn btn-secondary" { "Preview →" }
+        }
         @if let Some(f) = flash { div class="success-msg" { (f) } }
         @if let Some(e) = error { div class="error" { (e) } }
 
@@ -715,6 +743,88 @@ fn section_breadcrumb(site: &str, slug: &str, title: &str) -> Markup {
             (title)
         }
         h1 { (title) }
+    }
+}
+
+/// Render a page as it would appear publicly. The styles are
+/// admin-local approximations of the production look — clients
+/// should still preview against the actual site renderer once
+/// PlausiDen-Canon ships, but this gives a fair-enough sense of
+/// shape for in-admin review.
+#[must_use]
+pub fn page_preview(site: &str, page: &Page) -> Markup {
+    use plausiden_cms_core::page::{Card, Section};
+    let body = html! {
+        nav class="muted" {
+            a href="/sites" { "Sites" } " / "
+            a href={ "/sites/" (site) } { (site) } " / "
+            a href={ "/sites/" (site) "/pages" } { "Pages" } " / "
+            a href={ "/sites/" (site) "/pages/" (page.front.slug) "/edit" } { (page.front.slug) } " / "
+            "Preview"
+        }
+        h1 { "Preview: " (page.front.title) }
+        p class="muted" { "Approximate render — production styling lives in the site binary." }
+        @match page.front.status {
+            PageStatus::Draft => div class="preview-status draft" {
+                strong { "Draft" } " — not yet published. "
+                form action={ "/sites/" (site) "/pages/" (page.front.slug) "/publish" } method="post" style="display:inline-block; margin-left: 1rem;" {
+                    button type="submit" class="btn btn-success" style="font-size: 0.875rem; padding: 0.25rem 0.625rem;" { "Publish now" }
+                }
+            },
+            PageStatus::Published => div class="preview-status published" {
+                strong { "Published" } " — visible to public visitors when the site renders this page."
+            },
+        }
+        div class="preview-frame" {
+            div class="preview-banner" { "Preview" }
+            @for section in &page.sections {
+                @match section {
+                    Section::Hero { eyebrow, headline, subhead, cta } => div class="preview-hero" {
+                        @if let Some(e) = eyebrow {
+                            span class="eyebrow" { (e) }
+                        }
+                        h2 class="headline" { (headline) }
+                        p class="subhead" { (subhead) }
+                        @if let Some(c) = cta {
+                            a href=(c.href) class="cta" { (c.label) }
+                        }
+                    },
+                    Section::Prose { markdown } => div class="preview-prose" {
+                        (maud::PreEscaped(plausiden_cms_core::blog::render_html(markdown)))
+                    },
+                    Section::Cards { heading, items } => div class="preview-cards" {
+                        @if let Some(h) = heading {
+                            h3 class="heading" { (h) }
+                        }
+                        div class="grid" {
+                            @for c in items {
+                                (preview_card(c))
+                            }
+                        }
+                    },
+                    Section::CtaBand { headline, cta } => div class="preview-ctaband" {
+                        h3 class="headline" { (headline) }
+                        a href=(cta.href) class="cta" { (cta.label) }
+                    },
+                }
+            }
+        }
+        div style="margin-top: 1.5rem;" {
+            a href={ "/sites/" (site) "/pages/" (page.front.slug) "/edit" } class="btn btn-secondary" { "← Back to edit" }
+        }
+    };
+    shell(&format!("Preview: {}", page.front.title), body)
+}
+
+fn preview_card(c: &plausiden_cms_core::Card) -> Markup {
+    html! {
+        div class="card" {
+            h4 class="card-heading" { (c.heading) }
+            p class="card-body" { (c.body) }
+            @if let Some(cta) = &c.cta {
+                a href=(cta.href) class="card-cta" { (cta.label) " →" }
+            }
+        }
     }
 }
 
