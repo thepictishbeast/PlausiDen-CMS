@@ -163,7 +163,7 @@ impl Page {
 }
 
 /// One section of a page. Sections render as `<section>` bands;
-/// every section composes through a typed [`section_theme`] so a
+/// every section composes through a typed [`SectionTheme`] so a
 /// page can't accidentally land an off-system colour.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Section {

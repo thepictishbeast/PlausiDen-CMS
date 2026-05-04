@@ -30,7 +30,7 @@
 //!   challenge/response to the consuming admin binary. The
 //!   identity must be cryptographically attested before reaching
 //!   the API surface.
-//! * **Reproducible exports.** [`storage::export`] dumps the site
+//! * **Reproducible exports.** [`storage::export_site`] dumps the site
 //!   to a deterministic tar of TOML + media, no clock-leaking
 //!   timestamps in the archive header.
 
