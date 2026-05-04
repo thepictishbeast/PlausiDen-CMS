@@ -244,10 +244,7 @@ mod tests {
     #[test]
     fn slug_invalid_shapes_fail() {
         for bad in ["", "Home", "with space", "trailing-", "-leading", "café"] {
-            assert!(
-                Page::validate_slug(bad).is_err(),
-                "should reject {bad:?}",
-            );
+            assert!(Page::validate_slug(bad).is_err(), "should reject {bad:?}",);
         }
     }
 

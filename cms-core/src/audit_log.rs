@@ -52,14 +52,35 @@ pub struct AuditEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AuditAction {
-    SiteCreated { site_slug: String },
-    SiteUpdated { site_slug: String },
-    PageCreated { site_slug: String, page_slug: String },
-    PageEdited { site_slug: String, page_slug: String },
-    PagePublished { site_slug: String, page_slug: String },
-    PageArchived { site_slug: String, page_slug: String },
-    PageDeleted { site_slug: String, page_slug: String },
-    LogRotated { previous_seq: u64 },
+    SiteCreated {
+        site_slug: String,
+    },
+    SiteUpdated {
+        site_slug: String,
+    },
+    PageCreated {
+        site_slug: String,
+        page_slug: String,
+    },
+    PageEdited {
+        site_slug: String,
+        page_slug: String,
+    },
+    PagePublished {
+        site_slug: String,
+        page_slug: String,
+    },
+    PageArchived {
+        site_slug: String,
+        page_slug: String,
+    },
+    PageDeleted {
+        site_slug: String,
+        page_slug: String,
+    },
+    LogRotated {
+        previous_seq: u64,
+    },
 }
 
 /// Append-only audit log writer. One handle per site.
@@ -196,8 +217,7 @@ fn signing_payload(entry: &AuditEntry) -> Vec<u8> {
         AuditAction::PageDeleted { .. } => "page_deleted",
         AuditAction::LogRotated { .. } => "log_rotated",
     };
-    let action_payload =
-        serde_json::to_string(&entry.action).unwrap_or_default();
+    let action_payload = serde_json::to_string(&entry.action).unwrap_or_default();
     let mut buf = Vec::new();
     buf.extend_from_slice(&entry.seq.to_be_bytes());
     buf.extend_from_slice(entry.timestamp.to_rfc3339().as_bytes());
@@ -285,14 +305,15 @@ mod tests {
                 &key,
             )
             .unwrap();
-        let count = log.verify(|fp| {
-            if fp == "abc123" {
-                Some(key.verifying_key())
-            } else {
-                None
-            }
-        })
-        .unwrap();
+        let count = log
+            .verify(|fp| {
+                if fp == "abc123" {
+                    Some(key.verifying_key())
+                } else {
+                    None
+                }
+            })
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -313,9 +334,7 @@ mod tests {
             )
             .unwrap();
         }
-        let count = log
-            .verify(|_| Some(key.verifying_key()))
-            .unwrap();
+        let count = log.verify(|_| Some(key.verifying_key())).unwrap();
         assert_eq!(count, 5);
     }
 

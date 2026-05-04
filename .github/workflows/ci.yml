@@ -1,28 +1,52 @@
-name: CI
+name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  heartbeat:
-    name: repo-touched heartbeat
+  fmt:
+    name: rustfmt
     runs-on: [self-hosted, linux, x64, plausiden]
     steps:
       - uses: actions/checkout@v4
-      - name: list root + size
-        run: |
-          ls -la
-          du -sh . | tee /dev/stderr
-      - name: detect type
-        run: |
-          [ -f Cargo.toml ]      && echo "rust workspace"      || true
-          [ -f package.json ]    && echo "node/typescript"     || true
-          [ -f pyproject.toml ]  && echo "python"              || true
-          [ -f Makefile ]        && echo "make"                || true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: [self-hosted, linux, x64, plausiden]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - run: cargo clippy --workspace --all-targets --locked
+
+  test:
+    name: test
+    runs-on: [self-hosted, linux, x64, plausiden]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace --locked
+
+  doc:
+    name: doc
+    runs-on: [self-hosted, linux, x64, plausiden]
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo doc --workspace --no-deps --locked

@@ -89,12 +89,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::ListPages { site } => {
             let pages = storage.list_pages(&site)?;
             for p in pages {
-                println!(
-                    "{:<32} [{}] {}",
-                    p.slug,
-                    status_label(p.status),
-                    p.title,
-                );
+                println!("{:<32} [{}] {}", p.slug, status_label(p.status), p.title,);
             }
         }
         Cmd::NewPage { site, slug, title } => {

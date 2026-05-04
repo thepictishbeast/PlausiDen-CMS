@@ -311,7 +311,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let s = FsStorage::open(dir.path()).unwrap();
         s.write_site(&fixture_site()).unwrap();
-        s.write_page("fixture", &Page::draft("home", "Home")).unwrap();
+        s.write_page("fixture", &Page::draft("home", "Home"))
+            .unwrap();
         s.delete_page("fixture", "home").unwrap();
         assert!(matches!(
             s.read_page("fixture", "home"),
