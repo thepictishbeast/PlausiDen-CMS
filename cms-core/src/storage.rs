@@ -156,17 +156,16 @@ impl Storage for FsStorage {
         // Slug uniqueness — check existing pages
         let dir = self.pages_dir(site_slug);
         std::fs::create_dir_all(&dir)?;
-        if dir.join(format!("{}.toml", page.slug)).exists() {
-            // Allow overwrite when the IDs match (edit), reject
-            // when the slug exists under a different id (collision).
-            if let Ok(existing) = self.read_page(site_slug, &page.slug) {
-                if existing.id != page.id {
-                    return Err(CmsError::Validation(format!(
-                        "slug {:?} already used by a different page",
-                        page.slug,
-                    )));
-                }
-            }
+        // Allow overwrite when the IDs match (edit), reject when the
+        // slug exists under a different id (collision).
+        if dir.join(format!("{}.toml", page.slug)).exists()
+            && let Ok(existing) = self.read_page(site_slug, &page.slug)
+            && existing.id != page.id
+        {
+            return Err(CmsError::Validation(format!(
+                "slug {:?} already used by a different page",
+                page.slug,
+            )));
         }
         let body = toml::to_string_pretty(page)?;
         std::fs::write(self.page_path(site_slug, &page.slug), body)?;
