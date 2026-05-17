@@ -1,0 +1,23 @@
+[package]
+name = "cms-collab"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Typed branching version history + CRDT seam. Real CRDT impl plugs into the trait; this crate is the contract for branches, versions, merges + collaborative-edit state."
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
