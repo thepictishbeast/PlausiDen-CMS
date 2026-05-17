@@ -53,11 +53,12 @@ enum Cmd {
 }
 
 fn main() -> ExitCode {
+    tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("cms: {e:#}");
+            tracing::error!("cms: {e:#}");
             ExitCode::from(1)
         }
     }
@@ -78,41 +79,41 @@ fn run(cli: Cli) -> Result<()> {
                 theme,
             };
             storage.write_site(&site)?;
-            println!("cms: site {slug:?} initialised");
+            tracing::info!("cms: site {slug:?} initialised");
         }
         Cmd::ListSites => {
             let sites = storage.list_sites()?;
             for s in sites {
-                println!("{:<32} {:?}", s.slug, s.theme);
+                tracing::info!("{:<32} {:?}", s.slug, s.theme);
             }
         }
         Cmd::ListPages { site } => {
             let pages = storage.list_pages(&site)?;
             for p in pages {
-                println!("{:<32} [{}] {}", p.slug, status_label(p.status), p.title,);
+                tracing::info!("{:<32} [{}] {}", p.slug, status_label(p.status), p.title,);
             }
         }
         Cmd::NewPage { site, slug, title } => {
             let p = Page::draft(slug, title);
             storage.write_page(&site, &p)?;
-            println!("cms: page {:?} created in {:?}", p.slug, site);
+            tracing::info!("cms: page {:?} created in {:?}", p.slug, site);
         }
         Cmd::ShowPage { site, page } => {
             let p = storage.read_page(&site, &page)?;
-            println!("{}", toml::to_string_pretty(&p)?);
+            tracing::info!("{}", toml::to_string_pretty(&p)?);
         }
         Cmd::PublishPage { site, page } => {
             let mut p = storage.read_page(&site, &page)?;
             p.status = PageStatus::Published;
             p.updated_at = chrono::Utc::now();
             storage.write_page(&site, &p)?;
-            println!("cms: page {:?} published in {:?}", page, site);
+            tracing::info!("cms: page {:?} published in {:?}", page, site);
         }
         Cmd::ExportManifest { site } => {
             let dump = cms_core::storage::export_site(&storage, &site)?;
             for (path, bytes) in dump {
                 let digest = sha256_hex(&bytes);
-                println!("{digest}  {path}");
+                tracing::info!("{digest}  {path}");
             }
         }
     }
