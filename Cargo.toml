@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["cms-core", "cms-cli", "cms-admin-auth"]
+members = ["cms-core", "cms-cli", "cms-admin-auth", "cms-pre-publish-audit"]
 
 [workspace.package]
 version = "0.1.0"
