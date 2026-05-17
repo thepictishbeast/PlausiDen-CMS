@@ -1,5 +1,8 @@
 target/
-Cargo.lock
+# Cargo.lock is committed — workspace ships binaries and CI uses
+# --locked. (Removed from gitignore 2026-05-17 because every CI
+# job failed with 'cannot create the lock file because --locked
+# was passed'.)
 *.swp
 *~
 .DS_Store
