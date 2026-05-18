@@ -116,6 +116,16 @@ pub struct Page {
     pub meta: BTreeMap<String, String>,
 }
 
+/// Lightweight summary of a page for listings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageSummary {
+    pub id: PageId,
+    pub slug: String,
+    pub title: String,
+    pub status: PageStatus,
+    pub updated_at: DateTime<Utc>,
+}
+
 impl Page {
     /// Construct a fresh empty draft.
     #[must_use]

@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::error::{CmsError, CmsResult};
-use crate::page::{Page, Site};
+use crate::page::{Page, PageSummary, Site};
 
 /// Storage adapter trait. Every CMS read or write goes through one
 /// of these.
@@ -39,7 +39,7 @@ pub trait Storage {
     /// doesn't yet exist.
     fn write_site(&self, site: &Site) -> CmsResult<()>;
     /// List every page in a site.
-    fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<Page>>;
+    fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<PageSummary>>;
     /// Read one page by slug.
     fn read_page(&self, site_slug: &str, page_slug: &str) -> CmsResult<Page>;
     /// Persist a page. Validates the slug + uniqueness before
@@ -120,12 +120,12 @@ impl Storage for FsStorage {
         Ok(())
     }
 
-    fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<Page>> {
+    fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<PageSummary>> {
         let dir = self.pages_dir(site_slug);
         if !dir.exists() {
             return Err(CmsError::SiteNotFound(site_slug.into()));
         }
-        let mut out: Vec<Page> = Vec::new();
+        let mut out: Vec<PageSummary> = Vec::new();
         for entry in std::fs::read_dir(&dir)? {
             let entry = entry?;
             if !entry.file_type()?.is_file() {
@@ -134,7 +134,7 @@ impl Storage for FsStorage {
             let path = entry.path();
             if path.extension().map(|e| e == "toml").unwrap_or(false) {
                 let body = std::fs::read_to_string(&path)?;
-                let p: Page = toml::from_str(&body)?;
+                let p: PageSummary = toml::from_str(&body)?;
                 out.push(p);
             }
         }
