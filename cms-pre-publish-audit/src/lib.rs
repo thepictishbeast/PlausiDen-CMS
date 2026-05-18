@@ -3,7 +3,7 @@
 //!
 //! The CMS admin surfaces these findings in the publish dialog so
 //! the operator sees every quality + accessibility + SEO concern
-//! BEFORE the page becomes [`PageStatus::Published`].
+//! BEFORE the page becomes [`cms_core::PageStatus::Published`].
 //!
 //! Per `feedback_use_forge_for_websites`: this audit is the
 //! pre-publish counterpart to Forge's build-time gates. Where
