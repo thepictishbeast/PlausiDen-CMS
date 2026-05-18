@@ -1,7 +1,13 @@
 {
   "schema": "composition-baseline/1",
-  "comment": "Snapshot of pre-existing composition findings. Committed so the CI gate fails only on NEW findings. Re-snapshot via `python3 .github/scripts/composition.py baseline .`",
+  "comment": "Snapshot of pre-existing composition findings. Committed so the CI gate fails only on NEW findings. Re-snapshot via `python3 .github/scripts/composition.py baseline .`. Each entry should have a rationale comment alongside.",
+  "rationale": {
+    "rust-manual-derivable|cms-pre-publish-audit/src/lib.rs|manual impl Default for AuditThresholds (trivial body)": "AuditThresholds::default() returns Self { title_min: 4, title_max: 70, description_min: 50, description_max: 160 } — domain-specific non-zero defaults that #[derive(Default)] would replace with 0/0/0/0. The lint's TRIVIAL_BODY_LINE_BUDGET=10 heuristic flags any short manual impl regardless of whether the field values are derivable. Suppressed: keeping the non-zero defaults.",
+    "dry-duplicate-block|cms-core/Cargo.toml|3+ identical-line block recurs 3 times across 3 files": "The 3-line block is the standard Rust workspace-inheritance pattern (`edition.workspace = true`, `rust-version.workspace = true`, `license.workspace = true`). Inherent to every workspace-member Cargo.toml — extracting would defeat the point of workspace inheritance. Suppressed: false positive on workspace idiom."
+  },
   "suppressed": [
-    "rust-manual-derivable|cms-core/src/page.rs|manual impl Default for PageId (trivial body)"
+    "rust-manual-derivable|cms-core/src/page.rs|manual impl Default for PageId (trivial body)",
+    "rust-manual-derivable|cms-pre-publish-audit/src/lib.rs|manual impl Default for AuditThresholds (trivial body)",
+    "dry-duplicate-block|cms-core/Cargo.toml|3+ identical-line block recurs 3 times across 3 files"
   ]
 }
