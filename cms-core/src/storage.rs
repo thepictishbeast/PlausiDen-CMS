@@ -116,7 +116,7 @@ impl Storage for FsStorage {
     fn write_site(&self, site: &Site) -> CmsResult<()> {
         std::fs::create_dir_all(self.pages_dir(&site.slug))?;
         let body = toml::to_string_pretty(site)?;
-        std::fs::write(self.site_meta_path(&site.slug), body)?;
+        atomic_write(&self.site_meta_path(&site.slug), body.as_bytes())?;
         Ok(())
     }
 
@@ -168,7 +168,7 @@ impl Storage for FsStorage {
             )));
         }
         let body = toml::to_string_pretty(page)?;
-        std::fs::write(self.page_path(site_slug, &page.slug), body)?;
+        atomic_write(&self.page_path(site_slug, &page.slug), body.as_bytes())?;
         Ok(())
     }
 
@@ -335,4 +335,24 @@ mod tests {
         sorted.sort();
         assert_eq!(paths, sorted);
     }
+}
+
+/// Atomic write: tmp file + rename.
+fn atomic_write(dest: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = dest.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "dest has no parent")
+    })?;
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = parent.join(format!(".tmp.{}.{}", pid, nanos));
+
+    std::fs::write(&tmp_path, bytes)?;
+    if let Err(e) = std::fs::rename(&tmp_path, dest) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+    Ok(())
 }
