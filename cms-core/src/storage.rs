@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::error::{CmsError, CmsResult};
-use crate::page::{Page, Site};
+use crate::page::{Page, PageSummary, Site};
 
 /// Storage adapter trait. Every CMS read or write goes through one
 /// of these.
@@ -39,7 +39,7 @@ pub trait Storage {
     /// doesn't yet exist.
     fn write_site(&self, site: &Site) -> CmsResult<()>;
     /// List every page in a site.
-    fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<Page>>;
+    fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<PageSummary>>;
     /// Read one page by slug.
     fn read_page(&self, site_slug: &str, page_slug: &str) -> CmsResult<Page>;
     /// Persist a page. Validates the slug + uniqueness before
@@ -116,16 +116,16 @@ impl Storage for FsStorage {
     fn write_site(&self, site: &Site) -> CmsResult<()> {
         std::fs::create_dir_all(self.pages_dir(&site.slug))?;
         let body = toml::to_string_pretty(site)?;
-        std::fs::write(self.site_meta_path(&site.slug), body)?;
+        atomic_write(&self.site_meta_path(&site.slug), body.as_bytes())?;
         Ok(())
     }
 
-    fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<Page>> {
+    fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<PageSummary>> {
         let dir = self.pages_dir(site_slug);
         if !dir.exists() {
             return Err(CmsError::SiteNotFound(site_slug.into()));
         }
-        let mut out: Vec<Page> = Vec::new();
+        let mut out: Vec<PageSummary> = Vec::new();
         for entry in std::fs::read_dir(&dir)? {
             let entry = entry?;
             if !entry.file_type()?.is_file() {
@@ -134,7 +134,7 @@ impl Storage for FsStorage {
             let path = entry.path();
             if path.extension().map(|e| e == "toml").unwrap_or(false) {
                 let body = std::fs::read_to_string(&path)?;
-                let p: Page = toml::from_str(&body)?;
+                let p: PageSummary = toml::from_str(&body)?;
                 out.push(p);
             }
         }
@@ -168,7 +168,7 @@ impl Storage for FsStorage {
             )));
         }
         let body = toml::to_string_pretty(page)?;
-        std::fs::write(self.page_path(site_slug, &page.slug), body)?;
+        atomic_write(&self.page_path(site_slug, &page.slug), body.as_bytes())?;
         Ok(())
     }
 
@@ -335,4 +335,24 @@ mod tests {
         sorted.sort();
         assert_eq!(paths, sorted);
     }
+}
+
+/// Atomic write: tmp file + rename.
+fn atomic_write(dest: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let parent = dest.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "dest has no parent")
+    })?;
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_path = parent.join(format!(".tmp.{}.{}", pid, nanos));
+
+    std::fs::write(&tmp_path, bytes)?;
+    if let Err(e) = std::fs::rename(&tmp_path, dest) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(e);
+    }
+    Ok(())
 }
