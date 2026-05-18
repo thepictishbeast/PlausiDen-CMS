@@ -196,7 +196,7 @@ pub enum BranchPolicy {
 
 /// Version DAG snapshot for one page. Used by the admin UI's
 /// "history" panel.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct VersionGraph {
     /// All known versions, keyed by hash.
@@ -289,11 +289,11 @@ impl VersionGraph {
     }
 }
 
-impl Default for VersionGraph {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// `Default` is derived above (trivial body for both BTreeMap
+// fields). The pre-existing manual impl emitted a
+// `rust-manual-derivable` finding in CMS's Composition Audit
+// workflow — replaced with #[derive(Default)] per the audit
+// recommendation.
 
 // ============================================================
 // CRDT SEAM
