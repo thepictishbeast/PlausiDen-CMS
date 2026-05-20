@@ -294,6 +294,56 @@ pub trait AdminAuthBackend {
 
     /// Revoke a session (sign out).
     fn revoke_session(&mut self, session_id: uuid::Uuid) -> Result<(), AuthError>;
+
+    // ─── Credential management ───────────────────────────────────────
+    //
+    // Three CRUD methods over registered passkeys. Without these, a
+    // tenant operator can only ever ADD credentials — never see what's
+    // enrolled, never remove a lost device, never relabel an old key.
+    // All three are tenant-scoped and MUST reject cross-tenant access
+    // — backend impls do this by including the tenant_id in every
+    // storage-layer WHERE clause.
+    //
+    // Default `Err(AuthError::NotImplemented)` impls let the existing
+    // null / sqlite backends opt in incrementally without breaking
+    // compile. Real backends override.
+
+    /// List all PasskeyRecord rows for one tenant. Order is backend
+    /// choice (typically `registered_at ASC` for stable UI). Returns
+    /// an empty vec when the tenant has zero credentials enrolled.
+    fn list_passkeys(&self, _tenant_id: &str) -> Result<Vec<PasskeyRecord>, AuthError> {
+        Err(AuthError::NotImplemented("list_passkeys"))
+    }
+
+    /// Rename one passkey's operator-visible label. Cryptographic
+    /// state (credential id, signature counter, attestation chain)
+    /// is untouched — this is a pure display-label update. Backend
+    /// MUST verify (tenant_id, credential_id) belongs to this tenant
+    /// before applying the update.
+    ///
+    /// `new_label`: 1..=64 chars; backend SHOULD strip control /
+    /// zero-width / RTL-override characters before storing.
+    fn rename_passkey(
+        &mut self,
+        _tenant_id: &str,
+        _credential_id: &PasskeyCredentialId,
+        _new_label: &str,
+    ) -> Result<PasskeyRecord, AuthError> {
+        Err(AuthError::NotImplemented("rename_passkey"))
+    }
+
+    /// Permanently delete one passkey. Subsequent
+    /// `finish_authentication` attempts with that credential_id MUST
+    /// fail with `AuthError::Verification("unknown credential")`.
+    /// Backend SHOULD also revoke any active sessions issued from
+    /// this credential (or document a contrary policy).
+    fn delete_passkey(
+        &mut self,
+        _tenant_id: &str,
+        _credential_id: &PasskeyCredentialId,
+    ) -> Result<(), AuthError> {
+        Err(AuthError::NotImplemented("delete_passkey"))
+    }
 }
 
 /// Challenge issued at the start of a registration ceremony.
@@ -349,6 +399,16 @@ pub enum AuthError {
     /// error type in this).
     #[error("storage: {0}")]
     Storage(String),
+    /// Backend does not implement this operation yet. Surfaces the
+    /// trait method name so the caller can decide whether to fall
+    /// back or surface a friendly "feature unavailable" message.
+    #[error("operation not implemented in this backend: {0}")]
+    NotImplemented(&'static str),
+    /// Label fails validation (length, control chars, etc.). Used by
+    /// `rename_passkey` impls so callers get a typed reason rather
+    /// than a generic Storage error.
+    #[error("invalid label: {0}")]
+    InvalidLabel(String),
 }
 
 #[cfg(test)]
@@ -465,5 +525,108 @@ mod tests {
         assert_eq!(SameSite::Strict.token(), "Strict");
         assert_eq!(SameSite::Lax.token(), "Lax");
         assert_eq!(SameSite::None.token(), "None");
+    }
+
+    // ─── Credential CRUD trait defaults (task #62 follow-on) ─────────
+    //
+    // The newly-added `list_passkeys` / `rename_passkey` /
+    // `delete_passkey` methods ship with `Err(NotImplemented)`
+    // defaults so existing backends (null, sqlite stub) compile
+    // unchanged. Real backends override these. The tests below pin
+    // the default behaviour so a future refactor can't accidentally
+    // turn a NotImplemented into a silent success.
+
+    /// Minimal AdminAuthBackend impl that satisfies only the
+    /// pre-existing required methods. Used to prove the new CRUD
+    /// methods fall through to their `Err(NotImplemented)` defaults
+    /// without forcing every backend to implement them on day one.
+    struct StubBackend;
+
+    impl AdminAuthBackend for StubBackend {
+        fn id(&self) -> &'static str {
+            "stub"
+        }
+        fn begin_registration(
+            &mut self,
+            _tenant_id: &str,
+            _label: &str,
+        ) -> Result<RegistrationChallenge, AuthError> {
+            Err(AuthError::Storage("stub".into()))
+        }
+        fn finish_registration(
+            &mut self,
+            _ceremony_id: uuid::Uuid,
+            _client_data_json: &str,
+            _attestation_object_b64u: &str,
+        ) -> Result<PasskeyRecord, AuthError> {
+            Err(AuthError::Storage("stub".into()))
+        }
+        fn begin_authentication(
+            &mut self,
+            _tenant_id: &str,
+        ) -> Result<AuthenticationChallenge, AuthError> {
+            Err(AuthError::Storage("stub".into()))
+        }
+        fn finish_authentication(
+            &mut self,
+            _ceremony_id: uuid::Uuid,
+            _credential_id: &PasskeyCredentialId,
+            _client_data_json: &str,
+            _authenticator_data_b64u: &str,
+            _signature_b64u: &str,
+        ) -> Result<AdminSession, AuthError> {
+            Err(AuthError::Storage("stub".into()))
+        }
+        fn validate_session(&self, _session_id: uuid::Uuid) -> Result<AdminSession, AuthError> {
+            Err(AuthError::Storage("stub".into()))
+        }
+        fn revoke_session(&mut self, _session_id: uuid::Uuid) -> Result<(), AuthError> {
+            Err(AuthError::Storage("stub".into()))
+        }
+    }
+
+    #[test]
+    fn list_passkeys_default_returns_not_implemented() {
+        let b = StubBackend;
+        let r = b.list_passkeys("acme");
+        match r {
+            Err(AuthError::NotImplemented(m)) => assert_eq!(m, "list_passkeys"),
+            other => panic!("expected NotImplemented, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rename_passkey_default_returns_not_implemented() {
+        let mut b = StubBackend;
+        let cid = PasskeyCredentialId::parse("abc").unwrap();
+        let r = b.rename_passkey("acme", &cid, "Office YubiKey");
+        match r {
+            Err(AuthError::NotImplemented(m)) => assert_eq!(m, "rename_passkey"),
+            other => panic!("expected NotImplemented, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn delete_passkey_default_returns_not_implemented() {
+        let mut b = StubBackend;
+        let cid = PasskeyCredentialId::parse("abc").unwrap();
+        let r = b.delete_passkey("acme", &cid);
+        match r {
+            Err(AuthError::NotImplemented(m)) => assert_eq!(m, "delete_passkey"),
+            other => panic!("expected NotImplemented, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn auth_error_invalid_label_displays_reason() {
+        let e = AuthError::InvalidLabel("empty after sanitization".into());
+        assert!(e.to_string().contains("invalid label"));
+        assert!(e.to_string().contains("empty after sanitization"));
+    }
+
+    #[test]
+    fn auth_error_not_implemented_displays_method_name() {
+        let e = AuthError::NotImplemented("rename_passkey");
+        assert!(e.to_string().contains("rename_passkey"));
     }
 }
