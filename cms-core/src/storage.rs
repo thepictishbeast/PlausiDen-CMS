@@ -30,6 +30,10 @@ use crate::page::{Page, Site};
 
 /// Storage adapter trait. Every CMS read or write goes through one
 /// of these.
+///
+/// Site and page names become paths, so an implementation refuses any
+/// name that fails [`Page::validate_slug`] on every method, reads and
+/// deletes included, not only on writes.
 pub trait Storage {
     /// List every site this store carries.
     fn list_sites(&self) -> CmsResult<Vec<Site>>;
@@ -64,21 +68,33 @@ impl FsStorage {
         Ok(Self { root })
     }
 
-    fn site_dir(&self, slug: &str) -> PathBuf {
-        self.root.join("sites").join(slug)
+    // Every path into a site is built by these four, and they check
+    // the names first, so no caller can skip the check.
+    fn site_dir(&self, slug: &str) -> CmsResult<PathBuf> {
+        checked_name("site", slug)?;
+        Ok(self.root.join("sites").join(slug))
     }
 
-    fn pages_dir(&self, slug: &str) -> PathBuf {
-        self.site_dir(slug).join("pages")
+    fn pages_dir(&self, slug: &str) -> CmsResult<PathBuf> {
+        Ok(self.site_dir(slug)?.join("pages"))
     }
 
-    fn page_path(&self, site_slug: &str, page_slug: &str) -> PathBuf {
-        self.pages_dir(site_slug).join(format!("{page_slug}.toml"))
+    fn page_path(&self, site_slug: &str, page_slug: &str) -> CmsResult<PathBuf> {
+        checked_name("page", page_slug)?;
+        Ok(self.pages_dir(site_slug)?.join(format!("{page_slug}.toml")))
     }
 
-    fn site_meta_path(&self, slug: &str) -> PathBuf {
-        self.site_dir(slug).join("site.toml")
+    fn site_meta_path(&self, slug: &str) -> CmsResult<PathBuf> {
+        Ok(self.site_dir(slug)?.join("site.toml"))
     }
+}
+
+/// Site and page names follow the page slug rule: lowercase letters,
+/// digits and single dashes. With no `.`, `/` or `\` allowed, a name
+/// cannot climb out of its directory, and an absolute path cannot
+/// replace the store root (`Path::join` would let it).
+fn checked_name(kind: &str, name: &str) -> CmsResult<()> {
+    Page::validate_slug(name).map_err(|e| CmsError::Validation(format!("{kind} {e}")))
 }
 
 impl Storage for FsStorage {
@@ -105,7 +121,7 @@ impl Storage for FsStorage {
     }
 
     fn read_site(&self, slug: &str) -> CmsResult<Site> {
-        let path = self.site_meta_path(slug);
+        let path = self.site_meta_path(slug)?;
         if !path.exists() {
             return Err(CmsError::SiteNotFound(slug.into()));
         }
@@ -114,14 +130,14 @@ impl Storage for FsStorage {
     }
 
     fn write_site(&self, site: &Site) -> CmsResult<()> {
-        std::fs::create_dir_all(self.pages_dir(&site.slug))?;
+        std::fs::create_dir_all(self.pages_dir(&site.slug)?)?;
         let body = toml::to_string_pretty(site)?;
-        std::fs::write(self.site_meta_path(&site.slug), body)?;
+        std::fs::write(self.site_meta_path(&site.slug)?, body)?;
         Ok(())
     }
 
     fn list_pages(&self, site_slug: &str) -> CmsResult<Vec<Page>> {
-        let dir = self.pages_dir(site_slug);
+        let dir = self.pages_dir(site_slug)?;
         if !dir.exists() {
             return Err(CmsError::SiteNotFound(site_slug.into()));
         }
@@ -143,7 +159,7 @@ impl Storage for FsStorage {
     }
 
     fn read_page(&self, site_slug: &str, page_slug: &str) -> CmsResult<Page> {
-        let path = self.page_path(site_slug, page_slug);
+        let path = self.page_path(site_slug, page_slug)?;
         if !path.exists() {
             return Err(CmsError::PageNotFound(page_slug.into()));
         }
@@ -152,13 +168,13 @@ impl Storage for FsStorage {
     }
 
     fn write_page(&self, site_slug: &str, page: &Page) -> CmsResult<()> {
-        Page::validate_slug(&page.slug).map_err(CmsError::Validation)?;
+        // Checks both names before anything is created on disk.
+        let path = self.page_path(site_slug, &page.slug)?;
         // Slug uniqueness — check existing pages
-        let dir = self.pages_dir(site_slug);
-        std::fs::create_dir_all(&dir)?;
+        std::fs::create_dir_all(self.pages_dir(site_slug)?)?;
         // Allow overwrite when the IDs match (edit), reject when the
         // slug exists under a different id (collision).
-        if dir.join(format!("{}.toml", page.slug)).exists()
+        if path.exists()
             && let Ok(existing) = self.read_page(site_slug, &page.slug)
             && existing.id != page.id
         {
@@ -168,12 +184,12 @@ impl Storage for FsStorage {
             )));
         }
         let body = toml::to_string_pretty(page)?;
-        std::fs::write(self.page_path(site_slug, &page.slug), body)?;
+        std::fs::write(&path, body)?;
         Ok(())
     }
 
     fn delete_page(&self, site_slug: &str, page_slug: &str) -> CmsResult<()> {
-        let path = self.page_path(site_slug, page_slug);
+        let path = self.page_path(site_slug, page_slug)?;
         if !path.exists() {
             return Err(CmsError::PageNotFound(page_slug.into()));
         }
@@ -187,7 +203,7 @@ impl Storage for FsStorage {
 /// `tar` with a deterministic header for a byte-identical archive
 /// across runs (no embedded timestamps).
 pub fn export_site(storage: &FsStorage, site_slug: &str) -> CmsResult<Vec<(String, Vec<u8>)>> {
-    let dir = storage.site_dir(site_slug);
+    let dir = storage.site_dir(site_slug)?;
     if !dir.exists() {
         return Err(CmsError::SiteNotFound(site_slug.into()));
     }
@@ -317,6 +333,77 @@ mod tests {
             s.read_page("fixture", "home"),
             Err(CmsError::PageNotFound(_)),
         ));
+    }
+
+    /// Two sites side by side, with a page in `other` that `fixture`
+    /// must never reach.
+    fn two_sites() -> (tempfile::TempDir, FsStorage) {
+        let dir = tempdir().unwrap();
+        let s = FsStorage::open(dir.path().join("store")).unwrap();
+        s.write_site(&fixture_site()).unwrap();
+        let mut other = fixture_site();
+        other.slug = "other".into();
+        s.write_site(&other).unwrap();
+        s.write_page("fixture", &Page::draft("home", "Home"))
+            .unwrap();
+        s.write_page("other", &Page::draft("secret", "Secret"))
+            .unwrap();
+        (dir, s)
+    }
+
+    #[test]
+    fn a_page_name_cannot_reach_another_site() {
+        let (dir, s) = two_sites();
+        let escape = "../../other/pages/secret";
+        assert!(matches!(
+            s.read_page("fixture", escape),
+            Err(CmsError::Validation(_)),
+        ));
+        assert!(matches!(
+            s.delete_page("fixture", escape),
+            Err(CmsError::Validation(_)),
+        ));
+        let secret = dir.path().join("store/sites/other/pages/secret.toml");
+        assert!(secret.exists(), "delete_page removed another site's page");
+    }
+
+    #[test]
+    fn a_site_name_cannot_leave_the_sites_directory() {
+        let (dir, s) = two_sites();
+        // Each of these resolves to a real path today: the store's own
+        // site under another name, the store root, or anywhere at all.
+        let outside = dir.path().join("elsewhere");
+        let absolute = outside.to_string_lossy().into_owned();
+        for bad in [
+            "../sites/fixture",
+            "..",
+            "fixture/..",
+            absolute.as_str(),
+            "",
+        ] {
+            let refused = |r: CmsResult<()>| matches!(r, Err(CmsError::Validation(_)));
+            assert!(refused(s.read_site(bad).map(drop)), "read_site({bad:?})");
+            assert!(refused(s.list_pages(bad).map(drop)), "list_pages({bad:?})");
+            assert!(
+                refused(s.read_page(bad, "home").map(drop)),
+                "read_page({bad:?})"
+            );
+            assert!(refused(s.delete_page(bad, "home")), "delete_page({bad:?})");
+            assert!(
+                refused(export_site(&s, bad).map(drop)),
+                "export_site({bad:?})"
+            );
+            let page = Page::draft("written", "Written");
+            assert!(refused(s.write_page(bad, &page)), "write_page({bad:?})");
+            let mut site = fixture_site();
+            site.slug = bad.into();
+            assert!(refused(s.write_site(&site)), "write_site({bad:?})");
+        }
+        assert!(
+            !outside.exists(),
+            "write_site created a directory outside the store"
+        );
+        assert!(s.read_page("fixture", "home").is_ok());
     }
 
     #[test]
